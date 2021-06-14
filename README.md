@@ -28,7 +28,7 @@ python main.py
 
 
 ## Authors and acknowledgment
-Elena Gal, Philip Jettkant, Konstantin St, Hannes Kern, Sebastian Ertel, Simon Breneis, Emanuel Rapsch, Weile Wang, Weixin Yang, Terry Lyons, Remy Messadene
+Elena Gal, Philip Jettkant, Konstantin St, Hannes Kern, Sebastian Ertel, Simon Breneis, Emanuel Rapsch, Weile Weng, Weixin Yang, Terry Lyons, Remy Messadene
 
 ## Project status
 On-going
