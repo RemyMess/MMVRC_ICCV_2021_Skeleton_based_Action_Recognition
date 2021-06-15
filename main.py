@@ -1,29 +1,16 @@
-from src.preprocessing import *
-from src.data_grabbing.data_grabber import DataGrabber
-from src.algos import *
+from src.preprocessing.augmented_sig_transformer import AugmentedSigTransformer
+from src.algos.sig_classifier import SigClassifier
 
 
 class SkeletonBasedActionRecognistion:
     def __init__(self):
-        self.data = DataGrabber().getAllData()
+        self.sig_classifier = SigClassifier(
+            sig_data_wrapper=AugmentedSigTransformer
+        ) 
 
-    def preprocess(self):
-        raise NotImplementedError
-
-    def train(self):
-        pass
-
-    def render_plot(self):
-        raise NotImplementedError
-
-    def run(self, should_render_plot: bool = False):
-        self.preprocess()
-        self.train()
-
-        if should_render_plot:
-            self.render_plot()
-
+    def run(self, render_plot: bool = False):
+        self.sig_classifier.run(render_plot=render_plot)
 
 if __name__ == "__main__":
     obj = SkeletonBasedActionRecognistion()
-    obj.run()
+    obj.run(render_plot=True)
