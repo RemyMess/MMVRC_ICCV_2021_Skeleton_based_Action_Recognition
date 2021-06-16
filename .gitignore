@@ -1,3 +1,6 @@
 *.pyc
 *.whl
 */.env_mmvrc
+__pycache__
+
+_input/
