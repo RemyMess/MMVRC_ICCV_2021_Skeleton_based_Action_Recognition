@@ -345,7 +345,7 @@ def load_uav_data(dir_name, flag = 'train'):
     
     label_uav = np.array(label_uav)
     #print(label_uav.shape)
-    return data_uav,label_uav
+    return data_uav,label_uav,np.array(sample_name)
 
 if __name__ == '__main__':
 
@@ -359,7 +359,7 @@ if __name__ == '__main__':
 
     for flag in ['train']:
 
-        data_uav, label_uav = load_uav_data(DATASET_PATH, flag)
+        data_uav, label_uav, sample_name = load_uav_data(DATASET_PATH, flag)
         print('raw_data shape: ', data_uav.shape)
 
         data_uav = data_uav[:,:2] # all the z values are zeros, remove them
@@ -376,6 +376,7 @@ if __name__ == '__main__':
             print('Remove samples that have 1 frame or the maximum #frames (i.e., all frames are zeros). Index: ', del_index)
             data_uav_process_del = np.delete(data_uav_process_del,del_index,0)# remove this empty sample 
             label_uav_del = np.delete(label_uav_del,del_index,0)
+            sample_name_del = np.delete(sample_name,del_index,0)
 
             lengths = get_data_duration(data_uav_process_del)
             print(lengths.mean(),lengths.max(),lengths.min())
@@ -387,7 +388,11 @@ if __name__ == '__main__':
 
         if isSaveProcessData:
             np.save(os.path.join(DATASET_PATH,'{}_process_data.npy'.format(flag)), process_data)
-            np.save(os.path.join(DATASET_PATH,'{}_length.npy'.format(flag)), lengths)
+            
+            np.save(os.path.join(DATASET_PATH,'{}_process_length.npy'.format(flag)), lengths)
+
+            with open(os.path.join(DATASET_PATH,'{}_process_label.pkl'.format(flag)), 'wb') as f:
+                pickle.dump((list(sample_name_del), list(label_uav_del)), f)
     
     print('............End............. ')
 
