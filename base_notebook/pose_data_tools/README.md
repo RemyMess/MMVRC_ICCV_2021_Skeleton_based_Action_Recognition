@@ -10,7 +10,7 @@ pip install joblib
 python generate_data.py --data_path /path/to/pose_data_root
 ```
 
-3. Generate the train_process_data.npy and train_length.npy
+3. Generate the train_process_data.npy and train_process_length.npy
 ```python
 python preprocess.py --data_path /path/to/pose_data_root
 ```
