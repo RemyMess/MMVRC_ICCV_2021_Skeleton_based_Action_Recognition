@@ -1,4 +1,9 @@
 *.pyc
+*.npy
+*.npz
+*.pkl
+*.json
+*.pt
 *.whl
 */.env_mmvrc
 __pycache__
