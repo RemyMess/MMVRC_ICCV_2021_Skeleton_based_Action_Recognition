@@ -26,12 +26,14 @@ from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 # constants
 
 N_JOINTS = 17
-N_AXES = 3
+N_AXES = 2
 N_PERSONS = 2
-N_TIMESTEPS = 601
+N_TIMESTEPS = 305
 
-PATH_DATA = r"_input/train_data.npy"
-PATH_LABELS = r"_input/train_label.pkl"
+
+PATH_DATA = r"_input/train_process_data.npy"
+PATH_LABELS = r"_input/train_process_label.pkl"
+PATH_LABELS_DF = r"_input/train_process_label.csv"
 PATH_LEARNING_CURVE = r"_output/learning.csv"
 PATH_MODEL = r"_output/logsigrnn.hdf5"
 
@@ -41,7 +43,7 @@ PATH_MODEL = r"_output/logsigrnn.hdf5"
 # number of classes [0-155]; pick number smaller than 155 to learn less actions
 PERMITTED = np.arange(155)
 SIGNATURE_DEGREE = 2
-N_SEGMENTS = 64
+N_SEGMENTS = 32
 BATCH_SIZE = 256
 FILTER_SIZE_1 = 5
 FILTER_SIZE_2 = 40
@@ -58,20 +60,23 @@ TEST_SPLIT = 0.2
 
 def load_data():
 
-    with open(PATH_LABELS, 'rb') as f:
-        labels = pickle.load(f)
-        labels = pd.DataFrame(np.array(labels).T, columns=['filename', 'label'])
-
+    labels = pd.read_csv(PATH_LABELS_DF)
     idx = labels.loc[labels['label'].astype(int).isin(PERMITTED)].index
 
     # one-hot encoding
     encoder = OneHotEncoder()
     y = encoder.fit_transform(labels.loc[idx, 'label'].to_numpy().reshape((-1, 1))).toarray()
 
-    # train test split
+    # interpolate and bring the data to the same length
+    print("Interpolating frames")
+    idata = np.zeros(data.shape)
+    for i in tqdm(range(data.shape[0])):
+        length = labels.iloc[i]['length']
+        idata[i] = np.apply_along_axis(lambda x: np.interp(np.linspace(0, length, N_TIMESTEPS), np.arange(length), x[:length]), 1, data[i]) 
 
-    X = data[idx].transpose((0, 2, 3, 1, 4))
-    X = X.reshape(X.shape[:3] + (6,))
+    # train test split
+    X = idata[idx].transpose((0, 2, 3, 1, 4))
+    X = X.reshape(X.shape[:3] + (N_AXES * N_PERSONS,))
 
     assert not np.any(np.isnan(X))
     assert not np.any(np.isnan(y))
@@ -122,13 +127,12 @@ def build_model(n_segments=N_SEGMENTS, drop_rate_2=DROP_RATE_2, filter_size_2=FI
     return model
 
 
-def train():
+def train(X_train, X_test, y_train, y_test):
     
     early_stopping_monitor = EarlyStopping(monitor='loss', min_delta=0, patience=20, verbose=0, mode='auto')
     reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
     mcp_save = ModelCheckpoint(PATH_MODEL, save_best_only=True, monitor='acc', mode='auto')
 
-    X_train, X_test, y_train, y_test = load_data()
     model = build_model()
     callbacks = [early_stopping_monitor, reduce_lr, mcp_save]
     history = model.fit(X_train, y_train, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT, callbacks=callbacks)
@@ -136,28 +140,27 @@ def train():
     return model, history
 
 
-def randomized_search():
+def randomized_search(X_train, X_test, y_train, y_test):
 
     reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, factor=0.8, min_lr=0.000001)
 
     X_train, X_test, y_train, y_test = load_data()
-    model = KerasClassifier(build_fn=build_model, verbose=0)
+    model = KerasClassifier(build_fn=build_model, verbose=1)
     param_grid = dict(n_segments=[4, 8, 16, 32, 64],
                       n_hidden_neurons=[64, 128, 256],
                       drop_rate_2=[0.5, 0.6, 0.7, 0.8, 0.9],
                       filter_size_2=[20, 40, 60, 80],
                       batch_size=[64, 128, 256, 512])
     
-    random_search = RandomizedSearchCV(estimator=model, param_distributions=param_grid, n_iter=40, n_jobs=-1, verbose=10)
+    random_search = RandomizedSearchCV(estimator=model, param_distributions=param_grid, n_iter=100, n_jobs=8, cv=3, verbose=10)
     random_search.fit(X_train, y_train, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT, callbacks=[reduce_lr])
     return random_search
 
 
-def grid_search():
+def grid_search(X_train, X_test, y_train, y_test):
 
     reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
 
-    X_train, X_test, y_train, y_test = load_data()
     model = KerasClassifier(build_fn=build_model, verbose=0)
     param_grid = dict(n_segments=[4, 8, 16, 32, 64],
                       n_hidden_neurons=[64, 128, 256],
@@ -165,7 +168,7 @@ def grid_search():
                       filter_size_2=[20, 40, 60, 80],
                       batch_size=[64, 128, 256, 512])
 
-    grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=-1, cv=3, verbose=10) 
+    grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=-2, cv=3, verbose=10) 
     return grid.fit(X_train, y_train, epochs=N_EPOCHS, callbacks=[reduce_lr], verbose=0)
 
 
@@ -177,10 +180,13 @@ if __name__ == '__main__':
     # load numpy array
     data = np.load(PATH_DATA).astype(np.float64)
 
-    
-    # simple training
+    # train test split
+    X_train, X_test, y_train, y_test = load_data()
 
-    model, history = train()
+    
+    # # simple training
+
+    model, history = train(X_train, X_test, y_train, y_test)
     
     df = pd.DataFrame(history.history)
     df.to_csv(PATH_LEARNING_CURVE)
@@ -193,7 +199,7 @@ if __name__ == '__main__':
     
     # grid search
 
-    # grid_result = grid_search()
+    # grid_result = grid_search(X_train, X_test, y_train, y_test)
 
     # print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
 
@@ -208,7 +214,7 @@ if __name__ == '__main__':
 
     # random search
 
-    # random_search = randomized_search()
+    # random_search = randomized_search(X_train, X_test, y_train, y_test)
     
     # print("Best: %f using %s" % (random_search.best_score_, random_search.best_params_))
     # means = random_search.cv_results_['mean_test_score']
