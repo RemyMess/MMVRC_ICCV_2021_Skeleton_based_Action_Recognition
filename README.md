@@ -74,8 +74,8 @@ The init method:
             
 The run method:
 
-        Performs training and validation. Prints the confusion matrix with respect to the validation set if 
-        render_plot == True.
+            Performs training and validation. Prints the confusion matrix with respect to the validation set if 
+            render_plot == True.
 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
