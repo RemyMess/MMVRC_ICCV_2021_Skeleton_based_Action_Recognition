@@ -4,14 +4,26 @@ import math
 from joblib import Parallel, delayed
 from src.data_grabbing.data_grabber import DataGrabber
 
-# TODO: debug (follow Weixin's original code)
 
 class preNormaliser:
-    def __init__(self):
+    '''
+        A preNormaliser object contains a DataGrabber object and pre-normalised data. Three normalisation can be chosen.
+        Further normalisations may be added, or existing one edited. This script is based on the corresponding script
+        ... on github in "pipeline", downloaded on Friday, 18 June, at around 7:30 GMT+1. 
+        
+        Remark / Question: should one perhaps take zaxis={5,11] rather then [11,5] for visualisation?
+    '''
+    def __init__(self,pad=True,centre=True,rotate=True):
         self.data_grabber = DataGrabber()
-        self.train_prenorm_data, self.train_prenorm_label = self.pre_normalization(self.data_grabber.train_data)
+        self.train_prenorm_data, self.train_prenorm_label =\
+            self.pre_normalization(self.data_grabber.train_data), self.data_grabber.train_label
+        self.isPadding = pad
+        self.isCentering = centre
+        self.is3DRotating = rotate
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
+    # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
+    # for visualisation.
         '''
             Joint sequence same as COCO format: {
                 0: nose,
@@ -32,14 +44,19 @@ class preNormaliser:
                 15: left_ankle,
                 16: right_ankle
             }
+            
+            Data format: {
+            	N: sample
+            	C: coordinate
+            	T: frame ("time")
+            	V: joint ("vertex")
+            	M: person ID
+            }
         '''
         N, C, T, V, M = data.shape
         s = np.transpose(data, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
-        isPadding = True
-        isCentering = True
-        is3DRotation = True
 
-        if isPadding:
+        if self.isPadding:
             print("Shift non-zero nodes to beginning of frames, and then pad the null frames with the next valid frames")
             for i_s, skeleton in enumerate(tqdm(s)):  # Dimension N
                 if skeleton.sum() == 0:
@@ -59,7 +76,7 @@ class preNormaliser:
                     index_end = index_ranges.max(0)[1]
                 else:
                     index_start = 0
-                    index_end = T
+                    index_end = T-1
                 tmp = skeleton[:,index_start:index_end+1].copy()
                 skeleton *= 0
                 length = index_end-index_start+1
@@ -67,6 +84,7 @@ class preNormaliser:
 
 
                 # pad the null frames with the next valid frames
+                # Remark E.R.: addresses 'missing' valid frames
                 for i_p, person in enumerate(skeleton): # Dimension M (# person)
                     # `person` has shape (T, V, C)
                     if person.sum() == 0:
@@ -85,10 +103,12 @@ class preNormaliser:
                     if person.sum() == 0:
                         continue
                     for i_f, frame in enumerate(person):
-                        if i_f is 0: continue# after prevous step, the first frame should be non-zero and valid now.
+                        if i_f is 0: 
+                            continue
+                            # after prevous step, the first frame should be non-zero and valid now.
                         if frame.sum() == 0:
-                            if i_f < length: s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
-                            #s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
+                            if i_f < length: 
+                                s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
 
             """
             #print('skip the null frames')
@@ -124,13 +144,13 @@ class preNormaliser:
                         s[i_s, i_p, i_f:] = pad
                         break
             """       
-        if isCentering:
+        if self.isCentering:
             print('sub the center joint of the first frame (spine joint in ntu and neck joint in kinetics)')
             index = np.array([5,6,11,12],dtype=np.int64)
             for i_s, skeleton in enumerate(tqdm(s[...,:3])):
                 if skeleton.sum() == 0:
                     continue
-                # Use the first skeleton's body center (`1:2` along the nodes dimension)
+                # Use the first skeleton's body center (index: hips, shoulder; 1:2: left eye)
                 main_body_center = skeleton[0][:, index, :].mean(1,keepdims=True).copy()    # Shape (T, 4, C) -> Shape (T, 1, C)
                 #main_body_center = skeleton[0][:, 1:2, :].copy()    # Shape (T, 1, C)
                 #main_body_center = skeleton[0][:1, 1:2, :].copy()    # Shape (1, 1, C)
@@ -142,7 +162,7 @@ class preNormaliser:
                     # Subtract the first skeleton's centre joint, s.shape = (N, M, T, V, C)
                     s[i_s, i_p, ..., :C] = (s[i_s, i_p, ..., :C] - main_body_center) * mask
 
-        if is3DRotation:
+        if self.is3DRotating:
             print('parallel the bone between (jpt {}) and (jpt {}) of the first person to the z axis'.format(zaxis[0],zaxis[1]))
             print('parallel the bone between right shoulder(jpt {}) and left shoulder(jpt {}) of the first person to the x axis'.format(xaxis[0],xaxis[1]))
             skeletons = Parallel(n_jobs=-1)(delayed(self.parallelRotation)(skeleton,zaxis,xaxis) for skeleton in tqdm(s[...,:3]))
