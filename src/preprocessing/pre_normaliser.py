@@ -112,8 +112,8 @@ class preNormaliser:
                             continue
                             # after prevous step, the first frame should be non-zero and valid now.
                         if frame.sum() == 0:
-                            if i_f < length: 
-                                s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
+                            #if i_f < length: deactivated because we consider the frame for t in range(0,305)
+                            s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
             
             
             print(no_skeleton,'have no skeleton.')
