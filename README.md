@@ -11,7 +11,7 @@ Dataset paper: https://arxiv.org/abs/2104.00946
 
 ## Installation
 
-1. Create your environment and build dependences
+1. Create your environment and build dependencies. E.g. when using virtualenv:
 ```bash
 cd build;
 ./create_env.sh;
