@@ -90,7 +90,6 @@ class preNormaliser:
 
 
                 # pad the null frames with the next valid frames
-                # Remark E.R.: addresses 'missing' valid frames --- !flag / occlusion? perhaps this destroys useful information
                 for i_p, person in enumerate(skeleton): # Dimension M (# person)
                     # `person` has shape (T, V, C)
                     if person.sum() == 0:
