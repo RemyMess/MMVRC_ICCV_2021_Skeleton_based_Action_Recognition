@@ -2,25 +2,37 @@
 # coding: utf-8
 
 
-from esig import tosig
-import iisignature
-import numpy as np
-from keras import Model
-from keras.layers import concatenate, Dense, Dropout, LSTM, Input, InputLayer, Embedding, Flatten, Conv1D, Conv2D, MaxPooling2D, Reshape, Lambda, BatchNormalization
-from sklearn.model_selection import train_test_split
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-from keras.optimizers import Adam
-from sklearn.pipeline import Pipeline
-from keras.regularizers import l1, l2, l1_l2
-from sklearn.preprocessing import OneHotEncoder
-import pandas as pd
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from src.sigutils import *
 import os
 import pickle
-from keras.wrappers.scikit_learn import KerasClassifier
-from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+
+from esig import tosig
+import iisignature
+from joblib import Parallel, delayed
+from keras import Model
+from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from keras.layers import (
+    BatchNormalization,
+    Conv1D,
+    Conv2D,
+    Dense,
+    Dropout,
+    Flatten,
+    Input,
+    LSTM,
+    Lambda,
+    Reshape,
+    concatenate,
+)
+from keras.optimizers import Adam
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.preprocessing import OneHotEncoder
+from tqdm import tqdm
+from keras.utils import to_categorical
+
+from src.algos.logsigrnn.sigutils import *
 
 
 # constants
@@ -48,42 +60,27 @@ BATCH_SIZE = 256
 FILTER_SIZE_1 = 5
 FILTER_SIZE_2 = 40
 N_EPOCHS = 20
-N_HIDDEN_NEURONS = 256
+N_HIDDEN_NEURONS = 64
 DROP_RATE_2 = 0.8
 LEARNING_RATE = 0.001
-VALIDATION_SPLIT = 0.1
-TEST_SPLIT = 0.2
-
+VALIDATION_SPLIT = 0.15
+TEST_SPLIT = 0.15
 
 
 # split
 
-def load_data():
+def load_data(data):
 
     labels = pd.read_csv(PATH_LABELS_DF)
     idx = labels.loc[labels['label'].astype(int).isin(PERMITTED)].index
 
-    # one-hot encoding
-    encoder = OneHotEncoder()
-    y = encoder.fit_transform(labels.loc[idx, 'label'].to_numpy().reshape((-1, 1))).toarray()
-
-    # interpolate and bring the data to the same length
-    print("Interpolating frames")
-    idata = np.zeros(data.shape)
-    for i in tqdm(range(data.shape[0])):
-        length = labels.iloc[i]['length']
-        idata[i] = np.apply_along_axis(lambda x: np.interp(np.linspace(0, length, N_TIMESTEPS), np.arange(length), x[:length]), 1, data[i]) 
-
-    # train test split
-    X = idata[idx].transpose((0, 2, 3, 1, 4))
+    X = data[idx].transpose((0, 2, 3, 1, 4))
     X = X.reshape(X.shape[:3] + (N_AXES * N_PERSONS,))
 
     assert not np.any(np.isnan(X))
     assert not np.any(np.isnan(y))
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SPLIT, random_state=42)
-
-    return X_train, X_test, y_train, y_test
+    return X, y
 
 
 # log-sigrnn
@@ -100,21 +97,22 @@ def build_model(n_segments=N_SEGMENTS, drop_rate_2=DROP_RATE_2, filter_size_2=FI
 
     reshape = Reshape((input_shape[0] - FILTER_SIZE_1 + 1, 16 * N_JOINTS))(lin_projection_layer)
     lin_projection_layer = Conv1D(filter_size_2, 1)(reshape)
+    
+    mid_output = Lambda(SP, arguments=dict(no_of_segments=n_segments), output_shape=(n_segments, filter_size_2))(lin_projection_layer)
 
-    mid_output = Lambda(lambda x: SP(x, n_segments), output_shape=(n_segments, filter_size_2), name='start_position')(lin_projection_layer)
+    hidden_layer = Lambda(CLF,
+                          arguments=dict(number_of_segment=n_segments, deg_of_logsig=SIGNATURE_DEGREE, logsiglen=logsiglen),
+                          output_shape=(n_segments, logsiglen))(lin_projection_layer)
 
-    hidden_layer = Lambda(lambda x: CLF(x, n_segments, SIGNATURE_DEGREE, logsiglen), output_shape=(n_segments, logsiglen), name='logsig')(lin_projection_layer)
     hidden_layer = Reshape((n_segments, logsiglen))(hidden_layer)
 
     BN_layer = BatchNormalization()(hidden_layer)
 
     # samples from the signal + log signatures
-    mid_input = concatenate([mid_output, BN_layer], axis=-1)
+    mid_input = concatenate([mid_output, BN_layer])
 
-     # LSTM
+    # LSTM
     lstm_layer = LSTM(units=n_hidden_neurons, return_sequences=True)(mid_input)
-
-    # Dropout
     drop_layer = Dropout(drop_rate_2)(lstm_layer)
     output_layer = Flatten()(drop_layer)
     output_layer = Dense(len(PERMITTED), activation='softmax')(output_layer)
@@ -127,53 +125,21 @@ def build_model(n_segments=N_SEGMENTS, drop_rate_2=DROP_RATE_2, filter_size_2=FI
     return model
 
 
-def train(X_train, X_test, y_train, y_test):
+def train_model(model, X_train, y_train, n_epochs=N_EPOCHS, batch_size=BATCH_SIZE):
     
+    y_train_categorical = to_categorical(y_train)
+
     early_stopping_monitor = EarlyStopping(monitor='loss', min_delta=0, patience=20, verbose=0, mode='auto')
     reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
     mcp_save = ModelCheckpoint(PATH_MODEL, save_best_only=True, monitor='acc', mode='auto')
 
-    model = build_model()
     callbacks = [early_stopping_monitor, reduce_lr, mcp_save]
-    history = model.fit(X_train, y_train, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT, callbacks=callbacks)
+    history = model.fit(X_train, y_train_categorical, epochs=n_epochs, batch_size=batch_size, validation_split=VALIDATION_SPLIT, callbacks=callbacks)
     
-    return model, history
+    return history
 
 
-def randomized_search(X_train, X_test, y_train, y_test):
-
-    reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, factor=0.8, min_lr=0.000001)
-
-    X_train, X_test, y_train, y_test = load_data()
-    model = KerasClassifier(build_fn=build_model, verbose=1)
-    param_grid = dict(n_segments=[4, 8, 16, 32, 64],
-                      n_hidden_neurons=[64, 128, 256],
-                      drop_rate_2=[0.5, 0.6, 0.7, 0.8, 0.9],
-                      filter_size_2=[20, 40, 60, 80],
-                      batch_size=[64, 128, 256, 512])
-    
-    random_search = RandomizedSearchCV(estimator=model, param_distributions=param_grid, n_iter=100, n_jobs=8, cv=3, verbose=10)
-    random_search.fit(X_train, y_train, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT, callbacks=[reduce_lr])
-    return random_search
-
-
-def grid_search(X_train, X_test, y_train, y_test):
-
-    reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
-
-    model = KerasClassifier(build_fn=build_model, verbose=0)
-    param_grid = dict(n_segments=[4, 8, 16, 32, 64],
-                      n_hidden_neurons=[64, 128, 256],
-                      drop_rate_2=[0.5, 0.6, 0.7, 0.8, 0.9],
-                      filter_size_2=[20, 40, 60, 80],
-                      batch_size=[64, 128, 256, 512])
-
-    grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=-2, cv=3, verbose=10) 
-    return grid.fit(X_train, y_train, epochs=N_EPOCHS, callbacks=[reduce_lr], verbose=0)
-
-
-if __name__ == '__main__':
-    
+if __name__ == '__main__': 
     
     print("Loading data (takes less than a minute)")
 
@@ -181,12 +147,12 @@ if __name__ == '__main__':
     data = np.load(PATH_DATA).astype(np.float64)
 
     # train test split
-    X_train, X_test, y_train, y_test = load_data()
+    X, y = load_data(data) 
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SPLIT, random_state=42)
 
-    
-    # # simple training
-
-    model, history = train(X_train, X_test, y_train, y_test)
+    # build and train model
+    model = build_model()
+    history = train_model(model, X_train, y_train)
     
     df = pd.DataFrame(history.history)
     df.to_csv(PATH_LEARNING_CURVE)
@@ -194,12 +160,38 @@ if __name__ == '__main__':
     # model should be saved at checkpoints, in case it's not make sure last version is saved
     if not os.path.exists(PATH_MODEL):
         model.save(PATH_MODEL)
-   
 
-    
+
+    # cross-validate
+
+    def train(train_index, test_index, n_epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT):
+       
+        model = build_model()
+
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+
+        early_stopping_monitor = EarlyStopping(monitor='loss', min_delta=0, patience=20, verbose=0, mode='auto')
+        reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
+        mcp_save = ModelCheckpoint(PATH_MODEL, save_best_only=True, monitor='acc', mode='auto', save_weights_only=True)
+        
+        callbacks = [early_stopping_monitor, reduce_lr, mcp_save]
+        history = model.fit(X_train, to_categorical(y_train), epochs=n_epochs, batch_size=batch_size, validation_split=validation_split, callbacks=callbacks)
+
+        y_pred = np.argmax(model.predict(X_test), axis=1)
+
+        f1 = f1_score(y_test, y_pred, average='weighted')
+        conf_mat = confusion_matrix(y_test, y_pred)
+
+        return test_index, y_pred
+
+    skf = StratifiedKFold(n_splits=5)
+    out = Parallel(n_jobs=5, verbose=100)(delayed(train)(train_index, test_index) for train_index, test_index in list(skf.split(X, y)))
+
+
     # grid search
-
-    # grid_result = grid_search(X_train, X_test, y_train, y_test)
+    # model = KerasClassifier(build_fn=build_model, verbose=1)
+    # grid_result = grid_search(model, X_train, y_train)
 
     # print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
 
@@ -213,8 +205,8 @@ if __name__ == '__main__':
     
 
     # random search
-
-    # random_search = randomized_search(X_train, X_test, y_train, y_test)
+    # model = KerasClassifier(build_fn=build_model, verbose=1)
+    # random_search = randomized_search(model, X_train, y_train)
     
     # print("Best: %f using %s" % (random_search.best_score_, random_search.best_params_))
     # means = random_search.cv_results_['mean_test_score']

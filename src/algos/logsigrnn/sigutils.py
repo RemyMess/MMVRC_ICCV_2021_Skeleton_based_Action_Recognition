@@ -4,12 +4,14 @@ import iisignature
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
+from functools import partial
 
 
 def SP(path, no_of_segments):
     start_vec = np.linspace(1, K.int_shape(path)[1], no_of_segments + 1)
     start_vec = [int(round(x)) - 1 for x in start_vec]
-    return tf.map_fn(lambda x: K.gather(x, start_vec[:no_of_segments]), path)
+    fn = partial(K.gather, indices=start_vec[:no_of_segments]) 
+    return tf.map_fn(fn, path)
 
 
 def compute_logsig_features(path, number_of_segment, deg_of_logsig):
