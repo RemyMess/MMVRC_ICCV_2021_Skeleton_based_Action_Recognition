@@ -7,19 +7,21 @@ from src.data_grabbing.data_grabber import DataGrabber
 
 class preNormaliser:
     '''
-        A preNormaliser object contains a DataGrabber object and pre-normalised data. Three normalisation can be chosen.
+        A preNormaliser object contains a DataGrabber object and pre-normalised data. Three normalisation methods can be chosen.
         Further normalisations may be added, or existing one edited. This script is based on the corresponding script
         ... on github in "pipeline", downloaded on Friday, 18 June, at around 7:30 GMT+1. 
         
-        Remark / Question: should one perhaps take zaxis={5,11] rather then [11,5] for visualisation?
+        The DataGrabber object requires data (np.array) of shape (N,C,T,V,M), see data_grabber.py or below. pre_normalization returns data (np.array, float) of the same shape.
+        
+        Remark / Question: should one perhaps take zaxis=[5,11] rather then [11,5] for visualisation?
     '''
     def __init__(self,pad=True,centre=True,rotate=True):
-        self.data_grabber = DataGrabber()
-        self.train_prenorm_data, self.train_prenorm_label =\
-            self.pre_normalization(self.data_grabber.train_data), self.data_grabber.train_label
         self.isPadding = pad
         self.isCentering = centre
         self.is3DRotating = rotate
+        self.data_grabber = DataGrabber()
+        self.train_prenorm_data, self.train_prenorm_label =\
+            self.pre_normalization(self.data_grabber.train_data), self.data_grabber.train_label
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
@@ -53,14 +55,18 @@ class preNormaliser:
             	M: person ID
             }
         '''
+        data = data[:,:,:305,:,:]  # TO REDUCE DATA SIZE: MAXIMAL LENGTH 305
+        
         N, C, T, V, M = data.shape
         s = np.transpose(data, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
+  
+        no_skeleton = []
 
         if self.isPadding:
             print("Shift non-zero nodes to beginning of frames, and then pad the null frames with the next valid frames")
             for i_s, skeleton in enumerate(tqdm(s)):  # Dimension N
                 if skeleton.sum() == 0:
-                    print(i_s, ' has no skeleton')
+                    no_skeleton.append(i_s)
 
                 # Shift non-zero nodes to beginning of frames by computing the valid range of all persons
                 index_ranges = []
@@ -103,13 +109,15 @@ class preNormaliser:
                     if person.sum() == 0:
                         continue
                     for i_f, frame in enumerate(person):
-                        if i_f is 0: 
+                        if i_f==0: 
                             continue
                             # after prevous step, the first frame should be non-zero and valid now.
                         if frame.sum() == 0:
                             if i_f < length: 
                                 s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
-
+            
+            
+            print(no_skeleton, ' have no skeleton.')
             """
             #print('skip the null frames')
             if person[0].sum() == 0:
@@ -167,6 +175,10 @@ class preNormaliser:
             print('parallel the bone between right shoulder(jpt {}) and left shoulder(jpt {}) of the first person to the x axis'.format(xaxis[0],xaxis[1]))
             skeletons = Parallel(n_jobs=-1)(delayed(self.parallelRotation)(skeleton,zaxis,xaxis) for skeleton in tqdm(s[...,:3]))
             s = np.stack(skeletons)
+        else:
+            # eliminate the z-dimension which is zero
+            s = s[:,:,:,:,:2]
+            # C = 2
 
         data = np.transpose(s, [0, 4, 2, 3, 1])
         return data
