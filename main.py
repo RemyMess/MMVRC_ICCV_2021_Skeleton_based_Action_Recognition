@@ -10,8 +10,11 @@ class SkeletonBasedActionRecognition:
         ... A priori, several classifiers can be chosen and the device can be specified. 2) 'run' contains training
         ... and validation, as well as printing the confusion matrix.
     '''
-    def __init__(self,algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=True,
-            device='cuda',pad=True,centre=True,rotate=True,debug=False):
+    def __init__(self,algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=False,
+            device='cuda',pad=True,centre=True,rotate=False,debug=True):
+            
+            #algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=True,
+            #device='cuda',pad=True,centre=True,rotate=True,debug=False):
         '''
             · Inputs:
             algo: the classifier algorithm to be used. Algorithms can be added as a .py-script in ~/src/algos/. The args
@@ -29,7 +32,7 @@ class SkeletonBasedActionRecognition:
             centre: whether to centre the skeleta around the first person's torso or not
             rotate: whether to rotate the skeleta such that the vertebrae and clavicles are aligned with the z- and x-axes
             ... or not
-            debug: if True, only a small fraction of the frames will be considered.
+            debug: if True, only a small fraction of the frames and joints will be considered.
             
             · Commands:
             Defines a suitable preNormaliser object, if data is not to be loaded.
@@ -56,11 +59,13 @@ class SkeletonBasedActionRecognition:
             Performs training and validation. Prints the confusion matrix with respect to the validation set if 
             ... render_plot == True.
         '''
-        if self.algo='SigClassifier':
+        if self.algo=='SigClassifier':
             self.sig_classifier.run(render_plot=render_plot)
         else:
             raise NotImplementedError
 
 if __name__ == "__main__":
+    print('Init obj.')
     obj = SkeletonBasedActionRecognition()
+    print('Run obj.')
     obj.run(render_plot=True)
