@@ -13,15 +13,13 @@ class DataGrabber:
         The attribute k_fold_idx_dict is a nested dictionary specifying the indices of cross_val_fold_num=5 stratified
         ... folds of the (input) data, split into a training and a validation set. It has the structure [N_fold][z] where
         ... N_fold ranges over '0',...,str(cross_val_fold_num-1), z ranges over 'train', 'val'.
-        
-        Remark / Question: StratifiedKFold separates the data into two parts of the same shape(?). But training data should 
-        ... rather cover 80 %, validation data 20 % (not 50-50 %).
     '''
     
     def __init__(self):
-        self.dataset_folder_path = "".join(__file__.split("/")[:-1]) + "/raw_data/"
+        #self.dataset_folder_path = "".join(__file__.split("/")[:-1]) + "/raw_data/" --- OLD VERSION, had a bug
+        self.dataset_folder_path = os.path.dirname(__file__) + "/raw_data/"
         self.train_data, self.train_label = self._load_uav_data()
-        self.fold_idx_dict = self._cross_validation(cross_val_fold_num=5)
+        self.fold_idx_dict = self._cross_validation_fold(cross_val_fold_num=5)
 
     def _load_uav_data(self, flag = 'train'):
         data_uav = np.load(os.path.join(self.dataset_folder_path,'{}_raw_data.npy'.format(flag)))#mmap_mode = None, 'r‘
