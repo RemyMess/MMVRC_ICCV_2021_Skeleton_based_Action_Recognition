@@ -28,11 +28,9 @@ python main.py
 A class for skeleton-based human action recognition on UAV.
 Two methods: 
 
-1) '__init__': data preprocessing or loading, building the classifier. 
-        ... A priori, several classifiers can be chosen and the device can be specified. 
+1) '__init__': data preprocessing or loading, building the classifier. A priori, several classifiers can be chosen and the device can be specified. 
        
-2) 'run' contains training
-        ... and validation, as well as printing the confusion matrix.
+2) 'run' contains training and validation, as well as printing the confusion matrix.
 
 The init method:  
 
