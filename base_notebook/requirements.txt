@@ -8,7 +8,10 @@ requests==2.22.0
 tqdm==4.46.1
 joblib
 pickle-mixin
+
 #git+git://github.com/kschlegel/PSFDataset.git@fc616da584aec841f2497bd03139318841d9ea73
-#git+git://github.com/kschlegel/DatasetLoader.git@88587de554bf377874655e29aa1397d9ff348f49
 git+git://github.com/WeixinYang/PSFDataset.git
+#git+git://github.com/kschlegel/PSFDataset.git
+
+#git+git://github.com/kschlegel/DatasetLoader.git@88587de554bf377874655e29aa1397d9ff348f49
 git+git://github.com/kschlegel/DatasetLoader.git
