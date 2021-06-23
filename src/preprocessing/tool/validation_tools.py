@@ -177,7 +177,7 @@ def interpolate(sample, frame1, frame2):
 def convexCombination(x, y, alpha):
     return alpha*y + (1-alpha)*x
 
-def eliminate_spikes(sample, threshold = 0.7, possibleFirstFrames = 15, thresholdRejection = 0.2):
+def eliminate_spikes(sample, threshold = 20, possibleFirstFrames = 15, thresholdRejection = 0.2):
     """
     Expects a sample of the form T,V,C
     searches frames whose distance is below the respective threshold and linearly interpolates between them
