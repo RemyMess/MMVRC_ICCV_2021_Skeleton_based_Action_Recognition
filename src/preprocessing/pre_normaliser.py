@@ -14,8 +14,21 @@ class preNormaliser:
         The DataGrabber object requires data (np.array) of shape (N,C,T,V,M), see data_grabber.py or below. pre_normalization returns data (np.array, float) of the same shape.
         
         Remark / Question: should one perhaps take zaxis=[5,11] rather then [11,5] for visualisation?
+
+        Proposed order:
+        1) Switch bodies        --try, if switching bodies reduces speed between frames, ignore zero frames! (Hannes)
+        2) Scaling              --first person in unit square, conserving proportions (sample-wise)            (Weixin)
+        3) Eliminating Spikes   --interpolate between "good frames" (i.e. non-zero and not too fast) ->invisibility in confidence score (C=2) (might apply this vertex-wise)    (Hannes)
+                                    if we have to eliminate too much frames: still do the padding of empty frames!
+        4) Padding              --zero frames at the start become first non-zero frame, repeat very last frame -> Save real length in a vector, invisbility in confidence score (C=2)      (Hannes)
+        5) centering            --framewise for now, flag to switch between them                            (Weixin)
+        6) rotation             --not for now, maybe add later                                              (Weixin)
+        7) scale again          --same as first time (sample-wise)                                          (Weixin)
+        8) smoothing            --aplly savgol filter along axis 2 -> (windows: 5,degree: 2)                (Hannes)
+        9) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    (Hannes)
     '''
-    def __init__(self,pad=True,centre=True,rotate=True):
+    def __init__(self,pad=True,centre=True,rotate=True,switchBody =True):
+        self.switchBody = switchBody
         self.isPadding = pad
         self.isCentering = centre
         self.is3DRotating = rotate
@@ -58,7 +71,10 @@ class preNormaliser:
         data = data[:,:,:305,:,:]  # TO REDUCE DATA SIZE: MAXIMAL LENGTH 305
         
         N, C, T, V, M = data.shape
+
         s = np.transpose(data, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
+
+        #addSwitchPeople
   
         no_skeleton = []
 
@@ -179,6 +195,7 @@ class preNormaliser:
             s = s[:,:,:,:,:2]
             # C = 2
 
+        #setActivePerson1
         data = np.transpose(s, [0, 4, 2, 3, 1])
         return data
 
