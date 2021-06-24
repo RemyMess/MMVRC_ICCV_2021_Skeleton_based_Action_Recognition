@@ -16,8 +16,12 @@ def dyadic_logsig_features(path, n_segments_range, deg_of_logsig):
     s = iisignature.prepare(dim_path, deg_of_logsig)
 
     for i, n_segments in enumerate(n_segments_range[::-1]):
+        factor = max(n_segments_range) / n_segments
         segments = np.array_split(path, n_segments, axis=1)
-        logsigs[:, :, i*logsigdim:(i+1)*logsigdim] = np.array([[iisignature.logsig(sample_segment, s) for sample_segment in segment] for segment in segments]).transpose((1, 0, 2)).repeat(2**i, axis=1) / 2**i
+        logsigs[:, :, i*logsigdim:(i+1)*logsigdim] = \
+            np.array([[iisignature.logsig(sample_segment, s) for sample_segment in segment] for segment in segments]) \
+                .repeat(factor, axis=0) \
+                .transpose((1, 0, 2)) / factor
 
     return np.float32(logsigs)
 
