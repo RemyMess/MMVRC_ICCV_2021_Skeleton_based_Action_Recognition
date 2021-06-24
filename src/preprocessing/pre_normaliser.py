@@ -2,7 +2,9 @@ import numpy as np
 from tqdm import tqdm
 import math
 from joblib import Parallel, delayed
+from scipy.signal import savgol_filter
 from src.data_grabbing.data_grabber import DataGrabber
+from src.preprocessing.tool.validation_tools import *
 
 
 class preNormaliser:
@@ -15,23 +17,32 @@ class preNormaliser:
         
         Remark / Question: should one perhaps take zaxis=[5,11] rather then [11,5] for visualisation?
 
-        Proposed order:
-        1) Switch bodies        --try, if switching bodies reduces speed between frames, ignore zero frames! (Hannes)
-        2) Scaling              --first person in unit square, conserving proportions (sample-wise)            (Weixin)
-        3) Eliminating Spikes   --interpolate between "good frames" (i.e. non-zero and not too fast) ->invisibility in confidence score (C=2) (might apply this vertex-wise)    (Hannes)
-                                    if we have to eliminate too much frames: still do the padding of empty frames!
-        4) Padding              --zero frames at the start become first non-zero frame, repeat very last frame -> Save real length in a vector, invisbility in confidence score (C=2)      (Hannes)
-        5) centering            --framewise for now, flag to switch between them                            (Weixin)
-        6) rotation             --not for now, maybe add later                                              (Weixin)
-        7) scale again          --same as first time (sample-wise)                                          (Weixin)
-        8) smoothing            --aplly savgol filter along axis 2 -> (windows: 5,degree: 2)                (Hannes)
-        9) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    (Hannes)
+        The Preprocessing consists of:
+        1) switch bodies        --this method goes through each frame, and tries to switch the two bodies in said frame in such a way, that both bodies move as continuous as possible
+        2) scaling              --scales a sample in such a way, that the maximum height/width of body number 0 is 1, while preserving the proportions WARNING: DOES NOT WORK FRAME-WISE YET
+        3) eliminating Spikes   --Removes frames, which move too fast compared too the next valid frames. Tries several start-frames as valid frames, and chooses the one which leads
+                                  to the least amount of deleted frames. Deleted frames in the middle get replaced with convex combinations of the last and next valid frames. Deleted frames
+                                  get marked with a 0 in the third coordinate (V = 2) of each vertex. Valid frames have a 1 in this coordinate. Also automatically pads the data.
+        3.5) padding            --If eliminateSpikes is True, this automatically happens in eliminate_spikes. Replaces zero-frames at the start with the next non-zero frame. Replaces zero
+                                  frames in the middle with convex combinations of the next and last non-zero-frame. Replaces zero-frames at the end with the last non-zero frame.
+                                  Replaced frames get marked with a 0 in V = 2 in each vertex, while original frames have a 1.
+        4) centering            --centers the center of mass (average between both shoulders and both hips) at (0,0) for each frame. The sample-wise version centers the first frame.
+        5) rotation             --3d rotates the sample. Since our data is 2d, this does nothing for now.
+        6) scale again          --eliminating spikes might have changed the scale, so we aplly it again.
+        7) smoothing            --applies a savgol filter too smoothen the data with parameters (Window = 9, degree = 2).
+        8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
     '''
-    def __init__(self,pad=True,centre=True,rotate=True,switchBody =True):
-        self.switchBody = switchBody
-        self.isPadding = pad
-        self.isCentering = centre
-        self.is3DRotating = rotate
+    def __init__(self, pad=True, centre=1, rotate=1, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True):
+        self.switchBody = switchBody                #True or False
+        self.eliminateSpikes = eliminateSpikes      #True or False
+        self.isPadding = pad                        #True or False
+        self.isScaling = scale                      #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
+        self.isCentering = centre                   #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
+        self.is3DRotating = rotate                  #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
+        self.smoothen = smoothen                    #True or False
+
+        self.isParallel = parallel
+
         self.data_grabber = DataGrabber()
         self.train_prenorm_data, self.train_prenorm_label =\
             self.pre_normalization(self.data_grabber.train_data), self.data_grabber.train_label
@@ -74,10 +85,45 @@ class preNormaliser:
 
         s = np.transpose(data, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
 
-        #addSwitchPeople
-  
-        no_skeleton = []
+        if self.switchBody:
+            print("Switching bodies, if it reduces total energy.")
+            s = np.array(Parallel(n_jobs=-1)(delayed(switchPeople)(sample) for sample in tqdm(s)))
 
+        if self.isScaling: #0 for not doing, 1 for frame-wise, 2 for sample-wise
+            print('rescale each object sequence to the range [0,1] while conserving the high-width ratio')
+            isSamplewise = True if self.isScaling == 2 else False
+            ndim = min(C-1, 3) #the maximum num of coordinates for this operation is 3
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(self.parallelScale)(skeleton,isSamplewise) for i,skeleton in enumerate(tqdm(s[...,:ndim])))
+            else:
+                for i,skeleton in enumerate(tqdm(s[...,:ndim])):
+                    skeleton = self.parallelScale(skeleton,isSamplewise)
+                    skeletons.append(skeleton)
+            s[...,:ndim] = np.stack(skeletons)
+
+        def eliminateSpikesSample(sample):
+            for m in range(2):
+                if sample[m, :, :, :].sum() == 0:
+                    continue
+                sample[m, :, :, :] = eliminate_spikes(sample[m, :, :, :])
+            return sample
+
+        def padNullFramesSample(sample):
+            for m in range(2):
+                if sample[m, :, :, :].sum() == 0:
+                    continue
+                sample[m, :, :, :] = padNullFrames(sample[m, :, :, :])
+            return sample
+
+        if self.eliminateSpikes:
+            print("Eliminating spikes and padding null-frames.")
+            s = np.array(Parallel(n_jobs=-1)(delayed(eliminateSpikesSample)(sample) for sample in tqdm(s)))
+        elif self.isPadding:
+            print("Padding null-frames.")
+            s = np.array(Parallel(n_jobs=-1)(delayed(padNullFramesSample)(sample) for sample in tqdm(s)))
+
+        """
         if self.isPadding:
             print("Shift non-zero nodes to beginning of frames, and then pad the null frames with the next valid frames")
             for i_s, skeleton in enumerate(tqdm(s)):  # Dimension N
@@ -131,9 +177,16 @@ class preNormaliser:
                             #if i_f < length: deactivated because we consider the frame for t in range(0,305)
                             s[i_s, i_p, i_f] = s[i_s, i_p, i_f-1]
             
-            
-            print(no_skeleton,'have no skeleton.')
-            """
+        """
+
+        no_skeleton = []
+        for i_s, skeleton in enumerate(s):  # Dimension N
+            if skeleton.sum() == 0:
+                no_skeleton.append(i_s)
+
+        print(no_skeleton,'have no skeleton.')
+
+        """
             #print('skip the null frames')
             if person[0].sum() == 0:
                 # `index` of frames that have non-zero nodes
@@ -166,7 +219,8 @@ class preNormaliser:
                         pad = np.concatenate([person[:i_f] for _ in range(reps)], 0)[:rest]
                         s[i_s, i_p, i_f:] = pad
                         break
-            """       
+        
+
         if self.isCentering:
             print('sub the center joint of the first frame (spine joint in ntu and neck joint in kinetics)')
             index = np.array([5,6,11,12],dtype=np.int64)
@@ -194,9 +248,71 @@ class preNormaliser:
             # eliminate the z-dimension which is zero
             s = s[:,:,:,:,:2]
             # C = 2
+        """
+
+        if self.isCentering:  # 0 for not centering, 1 for frame-wise centering, 2 for sample-wise centering
+            print('sub the center joint of {} frame (spine joint in ntu and neck joint in kinetics)'.format(
+            'the first' if self.isCentering == 2 else 'each'))
+            index = np.array([5, 6, 11, 12], dtype=np.int64)
+            isSamplewise = True if self.isCentering == 2 else False
+            ndim = min(C-1, 3)  # the maximum num of coordinates for this operation is 3
+            skeletons = []
+            if self.isParallel:
+                # if padding with zero in previous steps, then the centering should only work on non-zero frames (use the length info)
+                # skeletons = Parallel(n_jobs=-1)(delayed(parallelCenter)(skeleton,index,isSamplewise,lengths[i]) for i,skeleton in enumerate(tqdm(s[...,:ndim])))
+                skeletons = Parallel(n_jobs=-1)(
+                    delayed(self.parallelCenter)(skeleton, index, isSamplewise) for i, skeleton in
+                    enumerate(tqdm(s[..., :ndim])))
+            else:
+                for i, skeleton in enumerate(tqdm(s[..., :ndim])):
+                    # skeleton = parallelCenter(skeleton,index,isSamplewise,length[i])
+                    skeleton = self.parallelCenter(skeleton, index, isSamplewise)
+                    skeletons.append(skeleton)
+            s[..., :ndim] = np.stack(skeletons)
+
+        if self.is3DRotating:  # 0 for not doing, 1 for frame-wise, 2 for sample-wise
+            if C > 3:  # only use for 3d
+                print('parallel the bone between (jpt {}) and (jpt {}) of the person to the z axis'.format(zaxis[0],
+                                                                                                       zaxis[1]))
+                print(
+                    'parallel the bone between right shoulder(jpt {}) and left shoulder(jpt {}) of the person to the x axis'.format(
+                        xaxis[0], xaxis[1]))
+                zaxis, xaxis = np.array(zaxis, dtype=np.int64), np.array(xaxis, dtype=np.int64)
+                isSamplewise = True if self.is3DRotating == 2 else False
+                ndim = 3  # the maximum num of coordinates for this operation is 3
+                skeletons = []
+                if self.isParallel:
+                    skeletons = Parallel(n_jobs=-1)(
+                        delayed(self.parallelRotation)(skeleton, zaxis, xaxis, isSamplewise) for i, skeleton in
+                        enumerate(tqdm(s[..., :ndim])))
+                else:
+                    for i, skeleton in enumerate(tqdm(s[..., :ndim])):
+                        skeleton = self.parallelRotation(skeleton, zaxis, xaxis, isSamplewise)
+                        skeletons.append(skeleton)
+                s[..., :ndim] = np.stack(skeletons)
+
+        if self.isScaling:  # 0 for not doing, 1 for frame-wise, 2 for sample-wise
+            print('rescale a second time')
+            isSamplewise = True if self.isScaling == 2 else False
+            ndim = min(C - 1, 3)  # the maximum num of coordinates for this operation is 3
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(
+                    delayed(self.parallelScale)(skeleton, isSamplewise) for i, skeleton in enumerate(tqdm(s[..., :ndim])))
+            else:
+                for i, skeleton in enumerate(tqdm(s[..., :ndim])):
+                    skeleton = self.parallelScale(skeleton, isSamplewise)
+                    skeletons.append(skeleton)
+            s[..., :ndim] = np.stack(skeletons)
+
+        if self.smoothen:
+            print('apply Savgol filter')
+            s[..., :2] = savgol_filter(s[..., :2], 9, 2, axis=2)
 
         #setActivePerson1
         data = np.transpose(s, [0, 4, 2, 3, 1])
+
+        print("-----------------Finished Preprocessing-----------------")
         return data
 
     def parallelRotation(self, skeleton,zaxis,xaxis):
@@ -300,3 +416,129 @@ class preNormaliser:
         data_uav = np.transpose(data_uav,(0,4,1,3,2))
         lengths = np.array(lengths)
         return lengths
+
+    def parallelScale(self,skeleton_origin,isSamplewise=True,length=-1,isCenter2Origin=False,isKeepHWRatio=True,scaleFactor=1.0):
+        if skeleton_origin.sum() == 0:
+            return skeleton_origin
+        if length > 0:
+            skeleton = skeleton_origin[:,:length,...]
+        else:
+            skeleton = skeleton_origin
+
+        nonZeroFrames = findNonZeroFrames(skeleton[0,...])
+        M, T, V, C = skeleton.shape
+        ref_person_id = 0
+
+        if isSamplewise:
+            ma = np.mean((skeleton[ref_person_id,nonZeroFrames,:,:]).max(axis=1), axis = 0)
+            mi = np.mean((skeleton[ref_person_id,nonZeroFrames,:,:]).min(axis=1), axis = 0)
+        else:
+            ma = (skeleton[ref_person_id].reshape(-1,C)).max(axis = 0)
+            mi = (skeleton[ref_person_id].reshape(-1,C)).min(axis = 0)
+
+        skeleton = (skeleton)*scaleFactor/((ma - mi).max() if isKeepHWRatio else (ma - mi))
+        if isCenter2Origin: skeleton -= 0.5*scaleFactor
+
+        skeleton_origin[:,:skeleton.shape[1],...] = skeleton
+        return skeleton_origin
+
+    def parallelCenter(self,skeleton_origin,index,isSamplewise=True,length=-1):
+        if skeleton_origin.sum() == 0:
+            return skeleton_origin
+        if length > 0:
+            skeleton = skeleton_origin[:,:length,...]
+        else:
+            skeleton = skeleton_origin
+
+        M, T, V, C = skeleton.shape
+        # Use the skeleton's body center
+        ref_person_id = 0
+        if isSamplewise:
+            main_body_center = skeleton[ref_person_id][:1, index, :].mean(1,keepdims=True).copy()    # Shape (1, 4, C) -> Shape (1, 1, C)
+        else:
+            main_body_center = skeleton[ref_person_id][:, index, :].mean(1,keepdims=True).copy()    # Shape (T, 4, C) -> Shape (T, 1, C)
+        for i_p, person in enumerate(skeleton):
+            if person.sum() == 0:
+                continue
+            # For all `person`, compute the `mask` which is the non-zero channel dimension
+            mask = (person.sum(-1) != 0).reshape(T, V, 1)
+            # Subtract the first skeleton's centre joint, s.shape = (N, M, T, V, C)
+            skeleton[i_p, ..., :C] = (skeleton[i_p, ..., :C] - main_body_center) * mask
+        skeleton_origin[:,:skeleton.shape[1],...] = skeleton
+        return skeleton_origin
+
+    def parallelRotation(self, skeleton_origin, zaxis, xaxis, isSamplewise=True, length=-1):
+        if skeleton_origin.sum() == 0:
+            return skeleton_origin
+        if length > 0:
+            skeleton = skeleton_origin[:, :length, ...]
+        else:
+            skeleton = skeleton_origin
+
+        skeleton = np.transpose(skeleton, (1, 0, 2, 3))  # from (M, T, V, C) to (T, M, V, C)
+
+        T, M, V, C = skeleton.shape
+
+
+        if isSamplewise:
+            matrix_all = None
+            for i_f, frame in enumerate(skeleton):  # T, M, V, C = skeleton.shape
+                if frame.sum() == 0:
+                    continue
+                ref_person_id = -1
+                for i_p, person in enumerate(frame):
+                    if person.sum() == 0:
+                        continue
+                    ref_person_id = i_p
+                    break
+
+                if ref_person_id >= 0:
+                    joint_bottom = frame[ref_person_id, zaxis[0]].reshape(-1, C).mean(0)
+                    joint_top = frame[ref_person_id, zaxis[1]].reshape(-1, C).mean(0)
+                    axis = np.cross(joint_top - joint_bottom, [0, 0, 1])
+                    angle = self.angle_between(joint_top - joint_bottom, [0, 0, 1])
+                    matrix_z = self.rotation_matrix(axis, angle)
+
+                    joint_right = frame[ref_person_id, xaxis[0]].reshape(-1, C).mean(0)
+                    joint_left = frame[ref_person_id, xaxis[1]].reshape(-1, C).mean(0)
+                    axis = np.cross(joint_right - joint_left, [1, 0, 0])
+                    angle = self.angle_between(joint_right - joint_left, [1, 0, 0])
+                    matrix_x = self.rotation_matrix(axis, angle)
+
+                    matrix_all = np.dot(matrix_x, matrix_z)
+
+                break
+            if matrix_all is not None:
+                skeleton = np.dot(matrix_all, skeleton.reshape(-1, C).T).T.reshape(T, M, V, C)
+
+        else:  # frame-wise
+            for i_f, frame in enumerate(skeleton):  # T, M, V, C = skeleton.shape
+                if frame.sum() == 0:
+                    continue
+
+                ref_person_id = -1
+                for i_p, person in enumerate(frame):
+                    if person.sum() == 0:
+                        continue
+                    ref_person_id = i_p
+                    break
+
+                if ref_person_id >= 0:
+                    joint_bottom = frame[ref_person_id, zaxis[0]].reshape(-1, C).mean(0)
+                    joint_top = frame[ref_person_id, zaxis[1]].reshape(-1, C).mean(0)
+                    axis = np.cross(joint_top - joint_bottom, [0, 0, 1])
+                    angle = self.angle_between(joint_top - joint_bottom, [0, 0, 1])
+                    matrix_z = self.rotation_matrix(axis, angle)
+
+                    joint_right = frame[ref_person_id, xaxis[0]].reshape(-1, C).mean(0)
+                    joint_left = frame[ref_person_id, xaxis[1]].reshape(-1, C).mean(0)
+                    axis = np.cross(joint_right - joint_left, [1, 0, 0])
+                    angle = self.angle_between(joint_right - joint_left, [1, 0, 0])
+                    matrix_x = self.rotation_matrix(axis, angle)
+
+                    matrix_all = np.dot(matrix_x, matrix_z)
+                    skeleton[i_f] = np.dot(matrix_all, frame.reshape(-1, C).T).T.reshape(M, V, C)
+
+        skeleton = np.transpose(skeleton, (1, 0, 2, 3))  # from (T, M, V, C) to (M, T, V, C)
+        skeleton_origin[:, :skeleton.shape[1], ...] = skeleton
+        return skeleton_origin
