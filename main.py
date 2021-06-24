@@ -11,7 +11,7 @@ class SkeletonBasedActionRecognition:
         ... and validation, as well as printing the confusion matrix.
     '''
     def __init__(self,algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=False,
-            device='cuda',pad=True,centre=True,rotate=False,debug=True):
+            device='cuda',pad=True,centre=1,rotate=1,switchBody =True, eliminateSpikes = True, scale = 2, smoothen = True,debug=True):
             
             #algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=True,
             #device='cuda',pad=True,centre=True,rotate=True,debug=False):
@@ -27,11 +27,21 @@ class SkeletonBasedActionRecognition:
             ... is the simple one-shot transform (from the demo notebook).
             load_data: whether to load the data or to create and save it. The corresponding path is ~/src/pre_processing/PSF/.
             device: the device to be used by torch for training. Change to 'cpu' if no gpu with cuda is available.
-            pad: whether to perform the padding procedure (addressing shifted started, missing frames, asynchronous ending
-            ... in case of two-player scenes) or not, see ~/src/pre_processing/pre_normaliser.py
-            centre: whether to centre the skeleta around the first person's torso or not
+
+            pad: whether to perform the padding procedure (replacing zero frames with valid frames) or not,
+            ... see ~/src/pre_processing/pre_normaliser.py
+            centre: whether to centre the skeleta around the first person's torso or not, 0 = not, 1 = frame-wise,
+            ... 2 = sample-wise, see ~/src/pre_processing/pre_normaliser.py
             rotate: whether to rotate the skeleta such that the vertebrae and clavicles are aligned with the z- and x-axes
-            ... or not
+            ... or not --DOES NOT WORK RIGHT NOW
+            switchBody: whether to switch the bodies in order to reduce the total energy or not,
+            ... see ~/src/pre_processing/pre_normaliser.py
+            eliminateSpikes: whether to try to find outlying frames and replace them with valid frames,
+            ... see ~/src/pre_processing/pre_normaliser.py
+            scale: whether to scale the data to fit into the unit square (preserves proportions), 0 = not, 1 = frame-wise,
+            ... 2 = sample-wise, see ~/src/pre_processing/pre_normaliser.py
+            smoothen: whether to apply a savgol filter to smoothen the data or not, see ~/src/pre_processing/pre_normaliser.py
+
             debug: if True, only a small fraction of the frames and joints will be considered.
             
             · Commands:
@@ -41,7 +51,7 @@ class SkeletonBasedActionRecognition:
         '''
         
         if not load_data:
-            pre_normaliser = preNormaliser(pad=pad,centre=centre,rotate=rotate)
+            pre_normaliser = preNormaliser(pad=pad,centre=centre,rotate=rotate,switchBody=switchBody,eliminateSpikes=eliminateSpikes,scale=scale,smoothen=smoothen)
         else:
             pre_normaliser = None
             
