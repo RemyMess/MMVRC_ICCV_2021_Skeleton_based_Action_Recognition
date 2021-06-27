@@ -22,10 +22,10 @@ class preNormaliser:
         2) scaling              --scales a sample in such a way, that the maximum height/width of body number 0 is 1, while preserving the proportions WARNING: DOES NOT WORK FRAME-WISE YET
         3) eliminating Spikes   --Removes frames, which move too fast compared too the next valid frames. Tries several start-frames as valid frames, and chooses the one which leads
                                   to the least amount of deleted frames. Deleted frames in the middle get replaced with convex combinations of the last and next valid frames. Deleted frames
-                                  get marked with a 0 in the third coordinate (V = 2) of each vertex. Valid frames have a 1 in this coordinate. Also automatically pads the data.
+                                  get marked with a 0 in the third coordinate (C = 2) of each vertex. Valid frames have a 1 in this coordinate. Also automatically pads the data.
         3.5) padding            --If eliminateSpikes is True, this automatically happens in eliminate_spikes. Replaces zero-frames at the start with the next non-zero frame. Replaces zero
                                   frames in the middle with convex combinations of the next and last non-zero-frame. Replaces zero-frames at the end with the last non-zero frame.
-                                  Replaced frames get marked with a 0 in V = 2 in each vertex, while original frames have a 1.
+                                  Replaced frames get marked with a 0 in C = 2 in each vertex, while original frames have a 1.
         4) centering            --centers the center of mass (average between both shoulders and both hips) at (0,0) for each frame. The sample-wise version centers the first frame.
         5) rotation             --3d rotates the sample. Since our data is 2d, this does nothing for now.
         6) scale again          --eliminating spikes might have changed the scale, so we aplly it again.
