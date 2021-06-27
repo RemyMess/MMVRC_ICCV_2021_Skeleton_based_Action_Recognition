@@ -32,7 +32,8 @@ class preNormaliser:
         7) smoothing            --applies a savgol filter too smoothen the data with parameters (Window = 9, degree = 2).
         8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
     '''
-    def __init__(self, pad=True, centre=1, rotate=1, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True):
+    def __init__(self, pad=True, centre=1, rotate=1, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
+                 setPerson0 = 2):
         self.switchBody = switchBody                #True or False
         self.eliminateSpikes = eliminateSpikes      #True or False
         self.isPadding = pad                        #True or False
@@ -40,12 +41,13 @@ class preNormaliser:
         self.isCentering = centre                   #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
         self.is3DRotating = rotate                  #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
         self.smoothen = smoothen                    #True or False
+        self.setPerson0 = setPerson0                #0 for doing nothing, 1 to set the more active person to be person 0, 2 to set the left person to be person 0
 
         self.isParallel = parallel
 
         self.data_grabber = DataGrabber()
-        self.train_prenorm_data, self.train_prenorm_label =\
-            self.pre_normalization(self.data_grabber.train_data), self.data_grabber.train_label
+        self.train_prenorm_label = self.data_grabber.train_label
+        self.train_prenorm_data, self.energy  = self.pre_normalization(self.data_grabber.train_data)
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
@@ -87,7 +89,14 @@ class preNormaliser:
 
         if self.switchBody:
             print("Switching bodies, if it reduces total energy.")
-            s = np.array(Parallel(n_jobs=-1)(delayed(switchPeople)(sample) for sample in tqdm(s)))
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(switchPeople)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    sample = switchPeople(sample)
+                    skeletons.append(sample)
+            s = np.stack(skeletons)
 
         if self.isScaling: #0 for not doing, 1 for frame-wise, 2 for sample-wise
             print('rescale each object sequence to the range [0,1] while conserving the high-width ratio')
@@ -118,10 +127,24 @@ class preNormaliser:
 
         if self.eliminateSpikes:
             print("Eliminating spikes and padding null-frames.")
-            s = np.array(Parallel(n_jobs=-1)(delayed(eliminateSpikesSample)(sample) for sample in tqdm(s)))
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(eliminateSpikesSample)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    sample = eliminateSpikesSample(sample)
+                    skeletons.append(sample)
+            s = np.stack(skeletons)
         elif self.isPadding:
             print("Padding null-frames.")
-            s = np.array(Parallel(n_jobs=-1)(delayed(padNullFramesSample)(sample) for sample in tqdm(s)))
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(padNullFramesSample)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    sample = padNullFramesSample(sample)
+                    skeletons.append(sample)
+            s = np.stack(skeletons)
 
         """
         if self.isPadding:
@@ -250,6 +273,28 @@ class preNormaliser:
             # C = 2
         """
 
+        if self.setPerson0 == 1:
+            print("setting more active person to position 0")
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(setActivePerson0)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    sample = setActivePerson0(sample)
+                    skeletons.append(sample)
+            s = np.stack(skeletons)
+
+        if self.setPerson0 == 2:
+            print("setting left person to position 0")
+            skeletons = []
+            if self.isParallel:
+                skeletons = Parallel(n_jobs=-1)(delayed(setLeftPerson0)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    sample = setLeftPerson0(sample)
+                    skeletons.append(sample)
+            s = np.stack(skeletons)
+
         if self.isCentering:  # 0 for not centering, 1 for frame-wise centering, 2 for sample-wise centering
             print('sub the center joint of {} frame (spine joint in ntu and neck joint in kinetics)'.format(
             'the first' if self.isCentering == 2 else 'each'))
@@ -309,11 +354,31 @@ class preNormaliser:
             print('apply Savgol filter')
             s[..., :2] = savgol_filter(s[..., :2], 9, 2, axis=2)
 
-        #setActivePerson1
+        def parallelGetEnergy(sample):
+            energy0 = energyNodes(sample[0,...])
+            energy1 = energyNodes(sample[1,...])
+            return(np.array([energy0,energy1]))
+
+        print('calculating energy for each node')
+        energy = []
+        if self.isParallel:
+            energy = Parallel(n_jobs=-1)(delayed(parallelGetEnergy)(sample) for sample in tqdm(s))
+        else:
+            for i, sample in enumerate(tqdm(s)):
+                energy_sample = parallelGetEnergy(sample)
+                energy.append(energy_sample)
+        energy = np.stack(energy)
+
+        for v in range(energy.shape[3]):
+            maskedEnergy = np.ma.masked_equal(energy[...,v],0)
+            std = np.std(maskedEnergy)
+            energy[...,v] = energy[...,v]/std
+
+        energy = np.transpose(energy, [0,3,2,1])
         data = np.transpose(s, [0, 4, 2, 3, 1])
 
         print("-----------------Finished Preprocessing-----------------")
-        return data
+        return data, energy
 
     def parallelRotation(self, skeleton,zaxis,xaxis):
         if skeleton.sum() == 0:

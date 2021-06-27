@@ -57,6 +57,30 @@ def averageDistance(sample):
         totalDist += distanceFrames(sample[:,frame,:,:], sample[:,frame+1,:,:])
     return totalDist/effective_length
 
+def averageDistanceVisibility(sample):
+    T,V,C = sample.shape
+    visibility = sample[:,:,2]
+    non_zeros = visibility.sum(axis=1)
+    start = non_zeros.argmax()       #first non-zero frame id
+    end = T - non_zeros[::-1].argmax() -1   #last non-zero frame
+    effective_length = end - start          #number of non-zero frames -1
+
+    if effective_length == 0:
+        return 0
+
+    totalDist = 0
+    for frame in range(start,end):
+        totalDist += distanceFrames(sample[frame,:,:], sample[frame+1,:,:])
+    return totalDist/effective_length
+
+def bodyCenterX(sample):
+    T, V, C = sample.shape
+    visibility = sample[:, :, 2]
+    non_zeros = visibility.sum(axis=1)
+    start = non_zeros.argmax()
+
+    return np.mean(sample[start,[5, 6, 11, 12],0],)
+
 def distanceFrames(frame1, frame2):
     """
     Expects 2 frames in any format, returns the 2-distance between them
@@ -276,6 +300,59 @@ def padNullFrames(sample):
         sample[idx,:,2] = 0
 
     return sample
+
+def setActivePerson0(sample):
+    if numberBodies(sample) == 1:
+        return sample
+
+    M,T,V,C = sample.shape
+
+    energyPerson0 = averageDistanceVisibility(sample[0,...])
+    energyPerson1 = averageDistanceVisibility(sample[1,...])
+
+    if energyPerson1 > energyPerson0:
+        sample = np.flip(sample, axis = 0)
+
+    return sample
+
+def setLeftPerson0(sample):
+    if numberBodies(sample) == 1:
+        return sample
+
+    M, T, V, C = sample.shape
+
+    positionPerson0 = bodyCenterX(sample[0,...])
+    positionPerson1 = bodyCenterX(sample[1,...])
+
+    if positionPerson0 > positionPerson1:
+        sample = np.flip(sample, axis = 0)
+
+    return sample
+
+def energyNodes(sample):
+    T,V,C = sample.shape
+
+    visibility = sample[:, :, 2]
+    non_zeros = visibility.sum(axis=1)
+    start = non_zeros.argmax()  # first non-zero frame id
+    end = T - non_zeros[::-1].argmax() - 1  # last non-zero frame
+
+    energy = np.zeros((T, V))
+
+    if start == end:
+        return energy
+
+    for frame in range(start,end+1):
+            if frame == start:
+                energy[frame,:] = np.linalg.norm(sample[frame,:,:2]-sample[frame+1,:,:2],axis = 1)
+            elif frame == end:
+                energy[frame, :] = np.linalg.norm(sample[frame-1, :, :2] - sample[frame, :,:2],axis = 1)
+            else:
+                energy[frame, :] = 0.5*(np.linalg.norm(sample[frame - 1, :,:2] - sample[frame, :,:2],axis=1)\
+                                        +np.linalg.norm(sample[frame, :,:2] - sample[frame+1, :,:2],axis=1))
+
+    return energy
+
 
 
 
