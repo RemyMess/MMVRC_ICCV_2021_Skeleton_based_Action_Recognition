@@ -34,19 +34,20 @@ from tqdm import tqdm
 from src.algos.logsigrnn.utils import *
 from src.algos.logsigrnn.sigutils import *
 from src.algos.logsigrnn.dyadic_sigutils import *
+from src.algos.linconv import LinConv
 
 
 # constants
 
 N_JOINTS = 17
-N_AXES = 2
+N_AXES = 3
 N_PERSONS = 2
 N_TIMESTEPS = 305
 
 
-PATH_DATA = r"_input/train_process_data.npy"
-PATH_LABELS = r"_input/train_process_label.pkl"
-PATH_LABELS_DF = r"_input/train_process_label.csv"
+PATH_DATA = r"_input/train_new_data.npy"
+PATH_LABELS = r"_input/train_new_label.pkl"
+PATH_LABELS_DF = r"_input/train_new_label.csv"
 PATH_LEARNING_CURVE = r"_output/learning.csv"
 PATH_MODEL = r"_output/logsigrnn.hdf5"
 
@@ -138,15 +139,15 @@ def build_model(input_shape, mode,
 
         layers = []
 
-        for i, n_segments in enumerate((4, 8, 16, 32, 64)):
+        for i, n_segment in enumerate(n_segments):
 
-            mid_output = Lambda(SP, arguments=dict(no_of_segments=n_segments), output_shape=(n_segments, filter_size_2), name=f"start_layer_{i}")(lin_projection_layer)
+            mid_output = Lambda(SP, arguments=dict(no_of_segments=n_segment), output_shape=(n_segment, filter_size_2), name=f"start_layer_{i}")(lin_projection_layer)
 
             hidden_layer = Lambda(CLF,
-                                  arguments=dict(number_of_segment=n_segments, deg_of_logsig=SIGNATURE_DEGREE, logsiglen=logsiglen),
-                                  output_shape=(n_segments, logsiglen))(lin_projection_layer)
+                                  arguments=dict(number_of_segment=n_segment, deg_of_logsig=SIGNATURE_DEGREE, logsiglen=logsiglen),
+                                  output_shape=(n_segment, logsiglen))(lin_projection_layer)
 
-            hidden_layer = Reshape((n_segments, logsiglen))(hidden_layer)
+            hidden_layer = Reshape((n_segment, logsiglen))(hidden_layer)
 
             BN_layer = BatchNormalization()(hidden_layer)
 
@@ -181,7 +182,7 @@ def train(model, train_index, test_index, **kwargs):
 
     early_stopping_monitor = EarlyStopping(monitor='loss', min_delta=0, patience=20, verbose=0, mode='auto')
     reduce_lr = ReduceLROnPlateau(monitor='loss', patience=50, verbose=1, factor=0.8, min_lr=0.000001)
-    mcp_save = ModelCheckpoint(PATH_MODEL, save_best_only=True, monitor='accuracy', mode='auto', save_weights_only=True)
+    mcp_save = ModelCheckpoint(PATH_MODEL, save_best_only=True, monitor='val_accuracy', mode='auto', save_weights_only=True)
     
     callbacks = [early_stopping_monitor, reduce_lr, mcp_save]
     history = model.fit(X_train, y_train, callbacks=callbacks, **kwargs)
@@ -198,12 +199,12 @@ if __name__ == '__main__':
     idx = labels.loc[labels['label'].astype(int).isin(PERMITTED)].index
     labels = labels.loc[idx]
 
-    processed_data = data[idx].copy()
-    # processed_data = interpolate_frames(processed_data, labels)
-    # processed_data = append_confidence_score(processed_data, labels)
+    X = data[idx].copy()
+    # X = interpolate_frames(X, labels)
+    # X = append_confidence_score(X, labels)
 
     X = processed_data.transpose((0, 2, 3, 1, 4))
-    X = X.reshape(X.shape[:3] + (-1,))
+    X = X.reshape(X.shape[:3] + (-1,)).astype(np.float32)
 
     encoder = OneHotEncoder(sparse=False)
     y = encoder.fit_transform(labels.loc[idx, 'label'].to_numpy().reshape(-1, 1))
@@ -260,4 +261,5 @@ if __name__ == '__main__':
     
     # for mean, stdev, param in sorted(zip(means, stds, params), key=lambda x: x[0])[::-1]:
     #     print("%f (%f) with: %r" % (mean, stdev, param))
+
 
