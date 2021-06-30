@@ -28,13 +28,14 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import confusion_matrix, f1_score
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
 from tqdm import tqdm
 
 from src.algos.logsigrnn.utils import *
 from src.algos.logsigrnn.sigutils import *
 from src.algos.logsigrnn.dyadic_sigutils import *
 from src.algos.linconv import LinConv
+from src.algos.logsigrnn.vae import *
 
 
 # constants
@@ -56,8 +57,7 @@ PATH_MODEL = r"_output/logsigrnn.hdf5"
 
 # number of classes [0-155]; pick number smaller than 155 to learn less actions
 PERMITTED = np.arange(155)
-# PERMITTED = 57, 106, 92, 119, 101, 120, 112, 11, 7, 107
-# PERMITTED = 87, 41, 75, 80, 76, 61, 38, 151, 121, 5
+TUPLE_SIZE = 2
 SIGNATURE_DEGREE = 2
 N_SEGMENTS = 32,
 BATCH_SIZE = 256
@@ -225,6 +225,27 @@ if __name__ == '__main__':
     # model should be saved at checkpoints, in case it's not make sure last version is saved
     if not os.path.exists(PATH_MODEL):
         model.save(PATH_MODEL)
+
+
+    # vae
+
+    x = data.transpose(0, 2, 1, 3, 4)
+    x = x.reshape((*x.shape[:3], -1)).swapaxes(2, 3)
+    with mp.Pool(mp.cpu_count()-2) as p:
+        sigs = np.array(list(tqdm(p.imap(_foo, range(x.shape[0])), total=x.shape[0])))
+
+
+    X = sigs.reshape((sigs.shape[0], sigs.shape[1], -1)).reshape((sigs.shape[0] * sigs.shape[1], -1))
+    X = X[::1000]
+
+    sc = MinMaxScaler()
+    X = sc.fit_transform(X)
+
+    X_train, X_test = train_test_split(X, test_size=0.15)
+
+    encoder, decoder, vae = build_vae_model()
+    vae.fit(X_train, X_train, epochs=10, batch_size=32, validation_data=(X_test, X_test))
+
 
 
     # cross-validate

@@ -1,87 +1,88 @@
 from itertools import combinations
 import multiprocessing as mp
-from keras.layers import Input, Dense, Lambda
-from keras import backend as K
-from keras import Model
-from keras.losses import binary_crossentropy
+import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
-
-
-# generate sigs
-
-x = data.transpose(0, 2, 1, 3, 4)
-x = x.reshape((*x.shape[:3], -1)).swapaxes(2, 3)
-
-
-TUPLE_SIZE = 2
-SIGNATURE_DEGREE = 2
-
-
-tups = list(combinations(range(34), TUPLE_SIZE))
-siglen = iisignature.siglength(3, SIGNATURE_DEGREE)
-
+import iisignature
+from tqdm import tqdm
+from tensorflow.keras import backend as K
+from tensorflow.keras.layers import Input, Dense, Lambda, Layer, Add, Multiply
+from tensorflow.keras.models import Model, Sequential
 
 def _foo(i):
+
+    tups = list(combinations(range(34), TUPLE_SIZE))
+    siglen = iisignature.siglength(3, SIGNATURE_DEGREE)
     sigs = np.zeros((x.shape[1], len(list(tups)), siglen))
+
     for j in range(x.shape[1]):
         for k, tup in enumerate(list(tups)):
             sigs[j, k] = iisignature.sig(x[i, j, list(tup)], SIGNATURE_DEGREE)
+
     return sigs
 
 
-with mp.Pool(mp.cpu_count()-2) as p:
-    sigs = np.array(list(tqdm(p.imap(_foo, range(x.shape[0])), total=x.shape[0])))
+def nll(y_true, y_pred):
+    """ Negative log likelihood (Bernoulli). """
+
+    # keras.losses.binary_crossentropy gives the mean
+    # over the last axis. we require the sum
+    return K.sum(K.binary_crossentropy(y_true, y_pred), axis=-1)
 
 
+class KLDivergenceLayer(Layer):
+
+    """ Identity transform layer that adds KL divergence
+    to the final model loss.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.is_placeholder = True
+        super(KLDivergenceLayer, self).__init__(*args, **kwargs)
+
+    def call(self, inputs):
+
+        mu, log_var = inputs
+
+        kl_batch = - .5 * K.sum(1 + log_var -
+                                K.square(mu) -
+                                K.exp(log_var), axis=-1)
+
+        self.add_loss(K.mean(kl_batch), inputs=inputs)
+
+        return inputs
 
 
-# create vae model
+def build_vae_model():
 
-X_train = sigs.reshape((sigs.shape[0], sigs.shape[1], -1)).reshape((sigs.shape[0] * sigs.shape[1], -1))
-X_train = X_train[::1000]
+    original_dim = 561*12
+    intermediate_dim = 561 * 4
+    latent_dim = 256
+    epsilon_std = 1.0
 
-sc = MinMaxScaler()
-X_train = sc.fit_transform(X_train)
+    decoder = Sequential([
+        Dense(intermediate_dim, input_dim=latent_dim, activation='relu'),
+        Dense(original_dim, activation='sigmoid')
+    ])
 
-original_dim = 561*12
-intermediate_dim = 561
-latent_dim = 64
+    x = Input(shape=(original_dim,))
+    h = Dense(intermediate_dim, activation='relu')(x)
 
-inputs = Input(shape=(original_dim,))
-h = Dense(intermediate_dim, activation='relu')(inputs)
-z_mean = Dense(latent_dim)(h)
-z_log_sigma = Dense(latent_dim)(h)
+    z_mu = Dense(latent_dim)(h)
+    z_log_var = Dense(latent_dim)(h)
 
-def sampling(args):
-    z_mean, z_log_sigma = args
-    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim),
-                              mean=0., stddev=0.1)
-    return z_mean + K.exp(z_log_sigma) * epsilon
+    z_mu, z_log_var = KLDivergenceLayer()([z_mu, z_log_var])
+    z_sigma = Lambda(lambda t: K.exp(.5*t))(z_log_var)
 
-z = Lambda(sampling)([z_mean, z_log_sigma])
+    eps = K.random_normal(stddev=epsilon_std, shape=(K.shape(x)[0], latent_dim))
+    z_eps = Multiply()([z_sigma, eps])
+    z = Add()([z_mu, z_eps])
 
-# Create encoder
-encoder = Model(inputs, [z_mean, z_log_sigma, z], name='encoder')
+    x_pred = decoder(z)
 
-# Create decoder
-latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-x = Dense(intermediate_dim, activation='relu')(latent_inputs)
-outputs = Dense(original_dim, activation='sigmoid')(x)
-decoder = Model(latent_inputs, outputs, name='decoder')
+    vae = Model(inputs=x, outputs=x_pred)
+    vae.compile(optimizer='rmsprop', loss=nll)
 
-# instantiate VAE model
-outputs = decoder(encoder(inputs)[2])
-vae = Model(inputs, outputs, name='vae_mlp')
+    encoder = Model(x, z_mu)
 
-# vae
-reconstruction_loss = binary_crossentropy(inputs, outputs)
-reconstruction_loss *= original_dim
-kl_loss = 1 + z_log_sigma - K.square(z_mean) - K.exp(z_log_sigma)
-kl_loss = K.sum(kl_loss, axis=-1)
-kl_loss *= -0.5
-vae_loss = K.mean(reconstruction_loss + kl_loss)
-vae.add_loss(vae_loss)
-vae.compile(optimizer='adam')
-
-vae.fit(X_train, X_train, epochs=10, batch_size=32, validation_split=0.15)
+    return encoder, decoder, vae
 
