@@ -32,8 +32,8 @@ class preNormaliser:
         7) smoothing            --applies a savgol filter too smoothen the data with parameters (Window = 9, degree = 2).
         8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
     '''
-    def __init__(self, pad=True, centre=1, rotate=1, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
-                 setPerson0 = 2):
+    def __init__(self, pad=True, centre=1, rotate=0, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
+                 setPerson0 = 2, confidence = 0):
         self.switchBody = switchBody                #True or False
         self.eliminateSpikes = eliminateSpikes      #True or False
         self.isPadding = pad                        #True or False
@@ -42,12 +42,13 @@ class preNormaliser:
         self.is3DRotating = rotate                  #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
         self.smoothen = smoothen                    #True or False
         self.setPerson0 = setPerson0                #0 for doing nothing, 1 to set the more active person to be person 0, 2 to set the left person to be person 0
+        self.confidence = confidence
 
         self.isParallel = parallel
 
         self.data_grabber = DataGrabber()
         self.train_prenorm_label = self.data_grabber.train_label
-        self.train_prenorm_data, self.energy  = self.pre_normalization(self.data_grabber.train_data)
+        self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
@@ -354,31 +355,49 @@ class preNormaliser:
             print('apply Savgol filter')
             s[..., :2] = savgol_filter(s[..., :2], 9, 2, axis=2)
 
+        labels = self.train_prenorm_label.copy()
+        if self.setPerson0 == 3:
+            print("duplicate samples with 2 bodies")
+            swappedSamples = []
+            newLabels = []
+            for i, sample in enumerate(tqdm(s)):
+                if numberBodies(sample) == 2:
+                    swappedSamples.append(np.flip(sample, axis=0))
+                    newLabels.append(self.train_prenorm_label[i])
+            labels = np.concatenate((self.train_prenorm_label, np.stack(newLabels)), axis = 0)
+            s = np.concatenate((s, np.stack(swappedSamples)), axis=0)
+
         def parallelGetEnergy(sample):
             energy0 = energyNodes(sample[0,...])
             energy1 = energyNodes(sample[1,...])
             return(np.array([energy0,energy1]))
 
-        print('calculating energy for each node')
-        energy = []
-        if self.isParallel:
-            energy = Parallel(n_jobs=-1)(delayed(parallelGetEnergy)(sample) for sample in tqdm(s))
-        else:
-            for i, sample in enumerate(tqdm(s)):
-                energy_sample = parallelGetEnergy(sample)
-                energy.append(energy_sample)
-        energy = np.stack(energy)
+        if self.confidence != 0:
+            print('calculating energy for each node')
+            energy = []
+            if self.isParallel:
+                energy = Parallel(n_jobs=-1)(delayed(parallelGetEnergy)(sample) for sample in tqdm(s))
+            else:
+                for i, sample in enumerate(tqdm(s)):
+                    energy_sample = parallelGetEnergy(sample)
+                    energy.append(energy_sample)
+            energy = np.stack(energy)
 
-        for v in range(energy.shape[3]):
-            maskedEnergy = np.ma.masked_equal(energy[...,v],0)
-            std = np.std(maskedEnergy)
-            energy[...,v] = energy[...,v]/std
+            for v in range(energy.shape[3]):
+                maskedEnergy = np.ma.masked_equal(energy[...,v],0)
+                std = np.std(maskedEnergy)
+                energy[...,v] = energy[...,v]/std
+            EN, EM, ET, EV = energy.shape
+            energy = energy.reshape(EN,EM,ET,EV,1)
 
-        energy = np.transpose(energy, [0,3,2,1])
+            if self.confidence == 1:
+                s = np.concatenate((s,energy), axis = 4)
+
+
         data = np.transpose(s, [0, 4, 2, 3, 1])
 
         print("-----------------Finished Preprocessing-----------------")
-        return data, energy
+        return data, labels
 
     def parallelRotation(self, skeleton,zaxis,xaxis):
         if skeleton.sum() == 0:
