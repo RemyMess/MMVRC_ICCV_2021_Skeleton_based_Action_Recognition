@@ -41,8 +41,8 @@ class preNormaliser:
         self.isCentering = centre                   #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
         self.is3DRotating = rotate                  #0 for doing nothing, 1 for frame-wise, 2 for sample-wise
         self.smoothen = smoothen                    #True or False
-        self.setPerson0 = setPerson0                #0 for doing nothing, 1 to set the more active person to be person 0, 2 to set the left person to be person 0
-        self.confidence = confidence
+        self.setPerson0 = setPerson0                #0 for doing nothing, 1 to set the more active person to be person 0, 2 to set the left person to be person 0, 3 to duplicate samples with 2 bodies
+        self.confidence = confidence                #0 for visibility in the third coordinate, 1 for visibility in third, energy in fourth.
 
         self.isParallel = parallel
 
@@ -372,6 +372,9 @@ class preNormaliser:
             energy1 = energyNodes(sample[1,...])
             return(np.array([energy0,energy1]))
 
+        def sigmoid(x):
+            return 1 / (1 + math.exp(-x))
+
         if self.confidence != 0:
             print('calculating energy for each node')
             energy = []
@@ -387,12 +390,22 @@ class preNormaliser:
                 maskedEnergy = np.ma.masked_equal(energy[...,v],0)
                 std = np.std(maskedEnergy)
                 energy[...,v] = energy[...,v]/std
+
             EN, EM, ET, EV = energy.shape
-            energy = energy.reshape(EN,EM,ET,EV,1)
+            energy = energy.reshape(EN, EM, ET, EV, 1)
 
             if self.confidence == 1:
+
                 s = np.concatenate((s,energy), axis = 4)
 
+            if self.confidence == 2:
+                print("calculating confidence scores")
+                nonZeroEnergies = (energy != 0)
+                with np.errstate(divide='ignore'):
+                    confidence = 1.5*(math.log(0.15) - np.log(energy))
+                sigmoid_v = np.vectorize(sigmoid)
+                confidence = nonZeroEnergies * sigmoid_v(confidence)
+                s = np.concatenate((s,confidence), axis = 4)
 
         data = np.transpose(s, [0, 4, 2, 3, 1])
 
