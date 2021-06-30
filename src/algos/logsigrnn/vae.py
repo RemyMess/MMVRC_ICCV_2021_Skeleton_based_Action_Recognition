@@ -11,7 +11,7 @@ from tensorflow.keras.models import Model, Sequential
 
 def _foo(i):
 
-    tups = list(combinations(range(34), TUPLE_SIZE))
+    tups = list(combinations(rang(34), TUPLE_SIZE))
     siglen = iisignature.siglength(3, SIGNATURE_DEGREE)
     sigs = np.zeros((x.shape[1], len(list(tups)), siglen))
 
@@ -53,12 +53,9 @@ class KLDivergenceLayer(Layer):
         return inputs
 
 
-def build_vae_model():
-
-    original_dim = 102
-    intermediate_dim = 48
-    latent_dim = 4
-    epsilon_std = 0.1
+def build_vae_model(original_dim, intermediate_dim, latent_dim):
+    
+    epsilon_std = 1.
 
     decoder = Sequential([
         Dense(intermediate_dim, input_dim=latent_dim, activation='relu'),
