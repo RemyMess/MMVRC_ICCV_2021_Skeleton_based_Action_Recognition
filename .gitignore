@@ -9,3 +9,5 @@
 __pycache__
 
 _input/
+.ropeproject
+.ipynb_checkpoints
