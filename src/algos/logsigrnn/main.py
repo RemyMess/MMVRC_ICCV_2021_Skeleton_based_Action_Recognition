@@ -42,7 +42,7 @@ PATH_MODEL = r"_output/logsigrnn.hdf5"
 # hyperparameters
 
 # number of classes [0-155]; pick number smaller than 155 to learn less actions
-PERMITTED = np.arange(10)
+PERMITTED = np.arange(155)
 TUPLE_SIZE = 2
 SIGNATURE_DEGREE = 2
 N_SEGMENTS = 32,
@@ -89,18 +89,14 @@ if __name__ == '__main__':
 
 
 
+
     # %% create X, y for vanilla model
 
     X = data[idx].copy()
-    # X = interpolate_frames(X, labels)
-    # X = append_confidence_score(X, labels)
-
+    
     X = X.transpose((0, 2, 3, 1, 4))
     X = X.reshape(X.shape[:3] + (-1,)).astype(np.float32)
-
-    one_hot_encoder = OneHotEncoder(sparse=False)
-    y = one_hot_encoder.fit_transform(labels.loc[idx, 'label'].to_numpy().reshape(-1, 1))
-
+    
     # train test split (we work indices to ensure pickling for parallelization
     train_index, test_index = train_test_split(np.arange(len(X)), test_size=TEST_SPLIT, random_state=42) 
 
@@ -121,21 +117,38 @@ if __name__ == '__main__':
     history = train(model, train_index, test_index, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT)
 
 
-    # %% create X, y for pairs model
 
-    X_sigs = sigs.reshape((sigs.shape[0] * sigs.shape[1], -1))
-    X = np.zeros((X_sigs.shape[0], 102))
+    # %% data vae
+    
+    N_PROJECTION_NEURONS = 8
+    EPSILON_STD = 0.1
+    
+    X = data.transpose(0, 2, 4, 3, 1).reshape(-1, 102)
+
+    train_index, test_index = train_test_split(np.arange(len(X)), test_size=TEST_SPLIT, random_state=42)
+
+    encoder, decoder, vae = build_vae_model(102, 48, N_PROJECTION_NEURONS, EPSILON_STD)
+    vae.fit(X[train_index], X[train_index], epochs=10, batch_size=256, validation_data=(X[test_index], X[test_index]))
+
+
+    # %% create X, y for data vae model
+
+    X_data = data[idx].copy()
+
+    X_data = X_data.transpose((0, 2, 3, 1, 4))
+    X_data = X_data.reshape((X_data.shape[0] * X_data.shape[1], -1)).astype(np.float32)
+
+    X = np.zeros((X_data.shape[0], N_PROJECTION_NEURONS))
 
     for i in tqdm(range(X.shape[0]//10000+1)):
         s = slice(i*10000, (i+1)*10000)
-        X[s] = encoder(X_sigs[s])
+        X[s] = encoder(X_data[s])
 
-    X = X.reshape((len(idx), data.shape[2], 102))
+    X = X.reshape((len(idx), data.shape[2], N_PROJECTION_NEURONS))
 
-    # train test split (we work indices to ensure pickling for parallelization
-    train_index, test_index = train_test_split(np.arange(len(X)), test_size=TEST_SPLIT, random_state=42) 
+    train_index, test_index = train_test_split(np.arange(len(X)), test_size=TEST_SPLIT, random_state=42)
 
-    
+
     # %% build and train model
 
     model = build_logsigrnn_model(input_shape=X.shape[1:],
@@ -143,7 +156,7 @@ if __name__ == '__main__':
                                   drop_rate_2=DROP_RATE_2,
                                   signature_degree=SIGNATURE_DEGREE,
                                   filter_size_1=FILTER_SIZE_1,
-                                  n_projection_neurons=102,
+                                  n_projection_neurons=N_PROJECTION_NEURONS,
                                   n_joints=N_JOINTS,
                                   n_classes=len(PERMITTED),
                                   learning_rate=LEARNING_RATE,
@@ -152,15 +165,41 @@ if __name__ == '__main__':
     history = train(model, train_index, test_index, epochs=N_EPOCHS, batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT)
 
 
-    # %% create X, y for vanilla model
+    # %% calc sigs
 
-    X = data[idx].copy()
-    # X = interpolate_frames(X, labels)
-    # X = append_confidence_score(X, labels)
+    x = data[idx].transpose(0, 2, 1, 3, 4)
+    x = x.reshape((*x.shape[:3], -1)).swapaxes(2, 3)
+    x = x[::100]
 
-    X = X.transpose((0, 2, 3, 1, 4))
-    X = X.reshape(X.shape[:3] + (-1,)).astype(np.float32)
+    with mp.Pool(mp.cpu_count()-2) as p:
+        sigs = np.array(list(tqdm(p.imap(_foo, range(x.shape[0])), total=x.shape[0])))
+
     
+    # %% sigs vae
+
+    N_PROJECTION_NEURONS = 16
+    EPSILON_STD = 0.1
+
+    X = sigs.reshape((sigs.shape[0] * sigs.shape[1], -1))
+    X = X[::100]
+
+    X_train, X_test = train_test_split(X, test_size=0.15)
+
+    encoder, decoder, vae = build_vae_model(6732, 1024, N_PROJECTION_NEURONS, EPSILON_STD)
+    vae.fit(X_train, X_train, epochs=1, batch_size=256, validation_data=(X_test, X_test))
+
+
+    # %% create X, y for tuple vae model
+
+    X_sigs = sigs.reshape((sigs.shape[0] * sigs.shape[1], -1))
+    X = np.zeros((X_sigs.shape[0], N_PROJECTION_NEURONS))
+
+    for i in tqdm(range(X.shape[0]//10000+1)):
+        s = slice(i*10000, (i+1)*10000)
+        X[s] = encoder(X_sigs[s])
+
+    X = X.reshape((len(idx), data.shape[2], N_PROJECTION_NEURONS))
+
     # train test split (we work indices to ensure pickling for parallelization
     train_index, test_index = train_test_split(np.arange(len(X)), test_size=TEST_SPLIT, random_state=42) 
 
@@ -189,36 +228,6 @@ if __name__ == '__main__':
     # model should be saved at checkpoints, in case it's not make sure last version is saved
     if not os.path.exists(PATH_MODEL):
         model.save(PATH_MODEL)
-
-
-    # %% data vae
-    
-    X = data.transpose(0, 2, 4, 3, 1).reshape(-1, 102)
-    X = X[::100]
-
-    X_train, X_test = train_test_split(X, test_size=0.15)
-
-    encoder, decoder, vae = build_vae_model(102, 48, 4)
-    vae.fit(X_train, X_train, epochs=10, batch_size=32, validation_data=(X_test, X_test))
-
-
-    # %% calc sigs
-
-    x = data[idx, :, :, :, :1].transpose(0, 2, 1, 3, 4)
-    x = x.reshape((*x.shape[:3], -1)).swapaxes(2, 3)
-    with mp.Pool(mp.cpu_count()-2) as p:
-        sigs = np.array(list(tqdm(p.imap(_foo, range(x.shape[0])), total=x.shape[0])))
-
-    
-    # %% sigs vae
-
-    X = sigs.reshape((sigs.shape[0] * sigs.shape[1], -1))
-    # X = X[::100]
-
-    X_train, X_test = train_test_split(X, test_size=0.15)
-
-    encoder, decoder, vae = build_vae_model(6732, 1024, 48)
-    vae.fit(X_train, X_train, epochs=2, batch_size=32, validation_data=(X_test, X_test))
 
 
     # %% cross-validate

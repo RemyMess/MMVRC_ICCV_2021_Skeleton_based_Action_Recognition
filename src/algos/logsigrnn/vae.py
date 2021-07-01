@@ -11,7 +11,7 @@ from tensorflow.keras.models import Model, Sequential
 
 def _foo(i):
 
-    tups = list(combinations(rang(34), TUPLE_SIZE))
+    tups = list(combinations(range(34), TUPLE_SIZE))
     siglen = iisignature.siglength(3, SIGNATURE_DEGREE)
     sigs = np.zeros((x.shape[1], len(list(tups)), siglen))
 
@@ -22,11 +22,7 @@ def _foo(i):
     return sigs
 
 
-def nll(y_true, y_pred):
-    """ Negative log likelihood (Bernoulli). """
-
-    # keras.losses.binary_crossentropy gives the mean
-    # over the last axis. we require the sum
+def mse_loss(y_true, y_pred):
     return K.mean(K.square(y_true - y_pred), axis=-1)
 
 
@@ -53,10 +49,8 @@ class KLDivergenceLayer(Layer):
         return inputs
 
 
-def build_vae_model(original_dim, intermediate_dim, latent_dim):
+def build_vae_model(original_dim, intermediate_dim, latent_dim, epsilon_std):
     
-    epsilon_std = 1.
-
     decoder = Sequential([
         Dense(intermediate_dim, input_dim=latent_dim, activation='relu'),
         Dense(original_dim, activation='linear')
@@ -78,7 +72,7 @@ def build_vae_model(original_dim, intermediate_dim, latent_dim):
     x_pred = decoder(z)
 
     vae = Model(inputs=x, outputs=x_pred)
-    vae.compile(optimizer='rmsprop', loss=nll)
+    vae.compile(optimizer='rmsprop', loss=mse_loss)
 
     encoder = Model(x, z_mu)
 
