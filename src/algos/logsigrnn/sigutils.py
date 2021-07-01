@@ -1,5 +1,3 @@
-from functools import partial
-
 import iisignature
 import numpy as np
 import tensorflow as tf
