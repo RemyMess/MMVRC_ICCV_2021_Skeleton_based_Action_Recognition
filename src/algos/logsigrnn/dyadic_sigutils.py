@@ -1,9 +1,6 @@
-from functools import partial
-
 import iisignature
 import numpy as np
 import tensorflow as tf
-from keras import backend as K
 from functools import partial
 
 
