@@ -36,8 +36,8 @@ def calculate_sample_spatial_signatures(sample, tuple_size, signature_degree):
     return signatures
 
 
-def mse_loss(y_true, y_pred):
-    return K.mean(K.square(y_true - y_pred), axis=-1)
+def nll(y_true, y_pred):
+    return K.sum(K.binary_crossentropy(y_true, y_pred), axis=-1)
 
 
 class KLDivergenceLayer(Layer):
@@ -62,17 +62,10 @@ class KLDivergenceLayer(Layer):
 
 
 def build_vae_model(original_dim, intermediate_dim, latent_dim, epsilon_std):
-    """
-    Variational autoencoder.
-    :param original_dim: dimension of the input layer
-    :param intermediate_dim: dimension of the intermedia layer
-    :param latent_dim: dimension of the latent space
-    :param epsilon_std: stddev of the variational layer
-    :return:
-    """
+
     decoder = Sequential([
         Dense(intermediate_dim, input_dim=latent_dim, activation='relu'),
-        Dense(original_dim, activation='linear')
+        Dense(original_dim, activation='sigmoid')
     ])
 
     x = Input(shape=(original_dim,))
@@ -91,7 +84,7 @@ def build_vae_model(original_dim, intermediate_dim, latent_dim, epsilon_std):
     x_pred = decoder(z)
 
     vae = Model(inputs=x, outputs=x_pred)
-    vae.compile(optimizer='rmsprop', loss=mse_loss)
+    vae.compile(optimizer='rmsprop', loss=nll)
 
     encoder = Model(x, z_mu)
 
@@ -109,24 +102,28 @@ class VAETransformer:
 
         self.encoder, self.decoder, self.vae = build_vae_model(n_input, n_intermediate, n_latent, epsilon_std)
 
-    def fit(self, X):
+    def fit(self, X, y, **fit_params):
 
         train_index, test_index = train_test_split(np.arange(len(X)), test_size=0.15)
 
-        self.vae.fit(X[train_index], X[train_index], epochs=1, batch_size=256,
-                     validation_data=(X[test_index], X[test_index]))
+        X_train = X[train_index].reshape(-1, self.n_input)
+        X_test = X[test_index].reshape(-1, self.n_input)
 
-    def transform(self, inputs):
+        self.vae.fit(X_train, X_train, validation_data=(X_test, X_test), **fit_params)
+
+        return self
+
+    def transform(self, X):
 
         # %% prepare features and labels X, y for spatial signatures vae model
 
-        X_sigs = inputs.reshape((inputs.shape[0] * inputs.shape[1], -1))
-        X = np.zeros((X_sigs.shape[0], self.n_latent))
+        X_sigs = X.reshape((X.shape[0] * X.shape[1], -1))
+        X_encoded = np.zeros((X_sigs.shape[0], self.n_latent))
 
-        for i in tqdm(range(X.shape[0] // 10000 + 1)):
+        for i in tqdm(range(X_encoded.shape[0] // 10000 + 1)):
             s = slice(i * 10000, (i + 1) * 10000)
-            X[s] = self.encoder(X_sigs[s])
+            X_encoded[s] = self.encoder(X_sigs[s])
 
-        X = X.reshape((inputs.shape[0], inputs.shape[1], self.n_latent))
+        X_encoded = X_encoded.reshape((X.shape[0], X.shape[1], self.n_latent))
 
-        return X
+        return X_encoded
