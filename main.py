@@ -1,6 +1,8 @@
-from src.preprocessing.augmented_sig_transformer import AugmentedSigTransformer
-from src.algos.sig_classifier import SigClassifier
+from src.algos.sig_classifier import UAVDataset,SigClassifier
 from src.preprocessing.pre_normaliser import preNormaliser
+from src.data_grabbing.data_grabber import DataGrabber
+import os
+import numpy as np
 
 
 class SkeletonBasedActionRecognition:
@@ -10,8 +12,9 @@ class SkeletonBasedActionRecognition:
         ... A priori, several classifiers can be chosen and the device can be specified. 2) 'run' contains training
         ... and validation, as well as printing the confusion matrix.
     '''
-    def __init__(self,algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=False,
-            device='cuda',pad=True,centre=1,rotate=1,switchBody =True, eliminateSpikes = True, scale = 2, smoothen = True,debug=True):
+    def __init__(self,algo='SigClassifier',batch_size=64,lr=0.005,epochs=20,load_preprocessed_data=False,pad=True,
+                 centre=1,rotate=0,switchBody =True,eliminateSpikes = True,scale = 2,parallel = True,
+                 smoothen = False,setPerson0 = 2,confidence = 0,data_in_mem=False,path=None,debug=False):
             
             #algo='SigClassifier',batch_size=20,lr=0.0001,epochs=20,transform='example',load_data=True,
             #device='cuda',pad=True,centre=True,rotate=True,debug=False):
@@ -25,7 +28,7 @@ class SkeletonBasedActionRecognition:
             epochs: epochs, training iterations, if applicable
             transform: a string indicating the set of path signature features to be extracted by sig_data_wrapper. 'example'
             ... is the simple one-shot transform (from the demo notebook).
-            load_data: whether to load the data or to create and save it. The corresponding path is ~/src/pre_processing/PSF/.
+            preprocess_data: whether to preprocess the data and save it, or to load it. The corresponding path is ~/src/preprocessed_data
             device: the device to be used by torch for training. Change to 'cpu' if no gpu with cuda is available.
 
             pad: whether to perform the padding procedure (replacing zero frames with valid frames) or not,
@@ -41,7 +44,8 @@ class SkeletonBasedActionRecognition:
             scale: whether to scale the data to fit into the unit square (preserves proportions), 0 = not, 1 = frame-wise,
             ... 2 = sample-wise, see ~/src/pre_processing/pre_normaliser.py
             smoothen: whether to apply a savgol filter to smoothen the data or not, see ~/src/pre_processing/pre_normaliser.py
-
+            
+            path: where to save preprocessed data, if None, then it is ./src/preprocessed_data/
             debug: if True, only a small fraction of the frames and joints will be considered.
             
             · Commands:
@@ -50,32 +54,82 @@ class SkeletonBasedActionRecognition:
             ... object) for the 'SigClassifier' algo with the specified parameters, see above
         '''
         
-        if not load_data:
-            pre_normaliser = preNormaliser(pad=pad,centre=centre,rotate=rotate,switchBody=switchBody,eliminateSpikes=eliminateSpikes,scale=scale,smoothen=smoothen)
+        # 1) Define path
+        print('Define path.')
+        self.data_in_mem = data_in_mem
+        if path is None:
+            self.path = os.path.join(os.path.dirname(__file__),'preprocessed_data/')
         else:
-            pre_normaliser = None
-            
+            self.path = path
+
+        # 2) Define data set (including loading the data and, if not loaded, preprocessing)
+        print('\nDefine data...')
+        data_grabber = DataGrabber()
+        if not load_preprocessed_data:
+            print('... preprocessing data,')
+            X,Y = data_grabber.load_raw_data('train')
+            pre_normaliser = preNormaliser(pad=pad,centre=centre,rotate=rotate,switchBody=switchBody,
+                                           eliminateSpikes=eliminateSpikes,scale=scale,parallel=parallel,
+                                           smoothen=smoothen,setPerson0=setPerson0,confidence=confidence)
+            X,Y = pre_normaliser.pre_normalization(X,Y)
+            print('... saving preprocessed data,')
+            np.save(os.path.join(self.path,'preprocessed_features.npy'),X)
+            np.save(os.path.join(self.path,'labels.npy'),Y)
+            print('... preprocessed data saved,')
+        else:
+            print('... loading preprocessed data,')
+            X = np.load(os.path.join(self.path,'preprocessed_features.npy'),mmap_mode='r')
+            Y = np.load(os.path.join(self.path,'labels.npy'))
+            print('... preprocessed data loaded,')
+
+        print('... defining a folding dict,')
+        fold_dict = data_grabber.fold_dict(X,Y)
+        n_fold = 0   # could be an input to self.__init__, or one could loop over it in range(5)
+        if not debug:
+            train_indices = fold_dict[str(n_fold)]['train']
+            val_indices = fold_dict[str(n_fold)]['val']
+        else:
+            train_indices = fold_dict[str(n_fold)]['train'][::100]
+            val_indices = fold_dict[str(n_fold)]['val'][::100]
+
+        if data_in_mem:
+            print('... defining training and validation data sets.')
+            training_set = UAVDataset((X[train_indices],Y[train_indices]),data_in_mem=data_in_mem)
+            val_set = UAVDataset((X[val_indices],Y[val_indices]),data_in_mem=data_in_mem)       
+        else:
+            if not load_preprocessed_data:
+                print('... saving data individually,')
+                for n in range(Y.shape[0]):
+                    datum = np.array([X[n],Y[n]],dtype=np.ndarray)
+                    np.save(self.path+'datum_'+str(n),datum)
+            X,Y = None, None
+
+            print('... defining training and validation data sets.')
+            training_set = UAVDataset((self.path,train_indices),data_in_mem=data_in_mem)
+            val_set = UAVDataset((self.path,val_indices),data_in_mem=data_in_mem)             
+
+        # 3) Define algo
+        print('\nDefine algo...')
         self.algo = algo
-        if algo=='SigClassifier':
-            sig_data_wrapper = AugmentedSigTransformer(pre_normaliser=pre_normaliser,transform=transform,
-                    load_transform=load_data,debug=debug)
-            self.sig_classifier = SigClassifier(
-                    sig_data_wrapper=sig_data_wrapper,device=device,batch_size=batch_size,lr=lr,epochs=epochs)
+        if algo=='SigClassifier':                        
+            self.sig_classifier = SigClassifier(batch_size=batch_size,lr=lr,epochs=epochs,debug=debug)
+            print('... building the model.')
+            self.sig_classifier.build(training_set,val_set)
         else:
             raise NotImplementedError
 
-    def run(self, render_plot: bool = False):
+    def __call__(self,flag='TEST'):
         '''
-            Performs training and validation. Prints the confusion matrix with respect to the validation set if 
-            ... render_plot == True.
+            Performs training and validation (and prediction soon). Prints the confusion matrix with respect to the validation set if render_plot == True.
         '''
         if self.algo=='SigClassifier':
-            self.sig_classifier.run(render_plot=render_plot)
+            print('Fitting the model {}.'.format(flag))
+            self.sig_classifier.fit(flag)
         else:
             raise NotImplementedError
 
 if __name__ == "__main__":
-    print('Init obj.')
+    print('\n   ---   Run 0.   ---\n')
     obj = SkeletonBasedActionRecognition()
-    print('Run obj.')
-    obj.run(render_plot=True)
+    obj()
+    print('\n   ---   Run 0 finished.   ---\n')
