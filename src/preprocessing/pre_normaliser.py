@@ -33,7 +33,7 @@ class preNormaliser:
         8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
     '''
     def __init__(self, pad=True, centre=1, rotate=0, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
-                 setPerson0 = 2, confidence = 0):
+                 setPerson0 = 2, confidence = 0, flag = 'train'):
         self.switchBody = switchBody                #True or False
         self.eliminateSpikes = eliminateSpikes      #True or False
         self.isPadding = pad                        #True or False
@@ -43,12 +43,16 @@ class preNormaliser:
         self.smoothen = smoothen                    #True or False
         self.setPerson0 = setPerson0                #0 for doing nothing, 1 to set the more active person to be person 0, 2 to set the left person to be person 0, 3 to duplicate samples with 2 bodies
         self.confidence = confidence                #0 for visibility in the third coordinate, 1 for visibility in third, energy in fourth.
+        self.flag = flag                            # 'train' for the train data, 'test' for the test data
 
         self.isParallel = parallel
 
-        self.data_grabber = DataGrabber()
-        self.train_prenorm_label = self.data_grabber.train_label
-        self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
+        self.data_grabber = DataGrabber(flag)
+        if flag == 'train':
+            self.train_prenorm_label = self.data_grabber.train_label
+            self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
+        elif flag == 'test':
+            self.test_prenorm_data = self.pre_normalization(self.data_grabber.train_data)[0]
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
@@ -355,7 +359,11 @@ class preNormaliser:
             print('apply Savgol filter')
             s[..., :2] = savgol_filter(s[..., :2], 9, 2, axis=2)
 
-        labels = self.train_prenorm_label.copy()
+        if self.flag == 'train':
+            labels = self.train_prenorm_label.copy()
+        else:
+            labels = []
+
         if self.setPerson0 == 3:
             print("duplicate samples with 2 bodies")
             swappedSamples = []
@@ -363,8 +371,10 @@ class preNormaliser:
             for i, sample in enumerate(tqdm(s)):
                 if numberBodies(sample) == 2:
                     swappedSamples.append(np.flip(sample, axis=0))
-                    newLabels.append(self.train_prenorm_label[i])
-            labels = np.concatenate((self.train_prenorm_label, np.stack(newLabels)), axis = 0)
+                    if self.flag == 'train':
+                        newLabels.append(self.train_prenorm_label[i])
+            if self.flag == 'train':
+                labels = np.concatenate((self.train_prenorm_label, np.stack(newLabels)), axis = 0)
             s = np.concatenate((s, np.stack(swappedSamples)), axis=0)
 
         def parallelGetEnergy(sample):

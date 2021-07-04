@@ -27,7 +27,7 @@ class DataGrabber:
         ... N_fold ranges over '0',...,str(cross_val_fold_num-1), z ranges over 'train', 'val'.
     '''
     
-    def __init__(self):
+    def __init__(self, given_flag = 'train'):
         self.raw_dataset_folder_path = os.path.join(os.path.dirname(__file__), "raw_data")
         self.refactored_dataset_folder_path = os.path.join(os.path.dirname(__file__), "refactored_data")
 
@@ -44,8 +44,9 @@ class DataGrabber:
 
         # C. Load
         print(f"DataGrabber: loading refactored test and train data.")
-        self.train_data, self.train_label = self._load_uav_data()
-        self.fold_idx_dict = self.cross_validation_fold(cross_val_fold_num=5)
+        self.train_data, self.train_label = self._load_uav_data(given_flag)
+        if given_flag == 'train':
+            self.fold_idx_dict = self.cross_validation_fold(cross_val_fold_num=5)
 
     def data_has_already_been_refactored(self, flag):
         return os.path.isfile(os.path.join(self.refactored_dataset_folder_path, self._refactored_data_filename(flag)))
@@ -73,12 +74,14 @@ class DataGrabber:
         # print(refactored_data_path)
         # print(data_uav)
 
-        with open(os.path.join(self.refactored_dataset_folder_path,'{}_label.pkl'.format(flag)), 'rb') as f:
-            sample_name, label_uav = pickle.load(f)
+        if flag == 'train':
+            with open(os.path.join(self.refactored_dataset_folder_path,'{}_label.pkl'.format(flag)), 'rb') as f:
+                sample_name, label_uav = pickle.load(f)
 
 
         
-        label_uav = np.array(label_uav)
+            label_uav = np.array(label_uav)
+        else: label_uav = []
         # print("inside2")
         # print(self.refactored_dataset_folder_path,'{}_label.pkl'.format(flag))
         # print(label_uav)
