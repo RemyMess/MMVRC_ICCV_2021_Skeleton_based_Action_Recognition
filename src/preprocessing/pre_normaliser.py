@@ -52,7 +52,11 @@ class preNormaliser:
             self.train_prenorm_label = self.data_grabber.train_label
             self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
         elif flag == 'test':
-            self.test_prenorm_data = self.pre_normalization(self.data_grabber.train_data)[0]
+            self.test_filenames = self.data_grabber.train_label
+            self.test_prenorm_data, self.test_filenames = self.pre_normalization(self.data_grabber.train_data)
+            for i in range(len(self.test_filenames)):
+                self.test_filenames[i] = self.test_filenames[i].split('/')[-1]
+                self.test_filenames[i] = self.test_filenames[i].split('\\')[-1]
 
     def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
@@ -362,7 +366,7 @@ class preNormaliser:
         if self.flag == 'train':
             labels = self.train_prenorm_label.copy()
         else:
-            labels = []
+            labels = self.test_filenames.copy()
 
         if self.setPerson0 == 3:
             print("duplicate samples with 2 bodies")
@@ -373,8 +377,12 @@ class preNormaliser:
                     swappedSamples.append(np.flip(sample, axis=0))
                     if self.flag == 'train':
                         newLabels.append(self.train_prenorm_label[i])
+                    else:
+                        newLabels.append(self.test_filenames[i])
             if self.flag == 'train':
                 labels = np.concatenate((self.train_prenorm_label, np.stack(newLabels)), axis = 0)
+            else:
+                labels.extend(newLabels)
             s = np.concatenate((s, np.stack(swappedSamples)), axis=0)
 
         def parallelGetEnergy(sample):

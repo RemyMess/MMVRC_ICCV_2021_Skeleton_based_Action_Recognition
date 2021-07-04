@@ -45,6 +45,7 @@ class DataGrabber:
         # C. Load
         print(f"DataGrabber: loading refactored test and train data.")
         self.train_data, self.train_label = self._load_uav_data(given_flag)
+
         if given_flag == 'train':
             self.fold_idx_dict = self.cross_validation_fold(cross_val_fold_num=5)
 
@@ -78,10 +79,13 @@ class DataGrabber:
             with open(os.path.join(self.refactored_dataset_folder_path,'{}_label.pkl'.format(flag)), 'rb') as f:
                 sample_name, label_uav = pickle.load(f)
 
-
-        
             label_uav = np.array(label_uav)
-        else: label_uav = []
+
+        else:
+            with open(os.path.join(self.refactored_dataset_folder_path, '{}_label.pkl'.format(flag)), 'rb') as f:
+                sample_name = pickle.load(f)
+
+            label_uav = sample_name
         # print("inside2")
         # print(self.refactored_dataset_folder_path,'{}_label.pkl'.format(flag))
         # print(label_uav)
@@ -124,6 +128,10 @@ class DataGrabber:
 
             with open('{}/{}_label.pkl'.format(out_folder_path, split), 'wb') as f:
                 pickle.dump((sample_name, list(sample_label)), f)
+
+        if split == 'test':
+            with open('{}/{}_label.pkl'.format(out_folder_path, split), 'wb') as f:
+                pickle.dump(sample_name, f)
 
     def _read_skeleton_filter(self, file):
         with open(file, 'r') as f:
