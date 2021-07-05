@@ -32,8 +32,8 @@ class preNormaliser:
         7) smoothing            --applies a savgol filter too smoothen the data with parameters (Window = 9, degree = 2).
         8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
     '''
-    def __init__(self, pad=True, centre=1, rotate=0, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
-                 setPerson0 = 2, confidence = 0):
+    def __init__(self, pad=True, centre=1, rotate=0, switchBody =True, eliminateSpikes = True,
+                 scale = 2, parallel = True, smoothen = True,setPerson0 = 2, confidence = 0):
         self.switchBody = switchBody                #True or False
         self.eliminateSpikes = eliminateSpikes      #True or False
         self.isPadding = pad                        #True or False
@@ -46,11 +46,11 @@ class preNormaliser:
 
         self.isParallel = parallel
 
-        self.data_grabber = DataGrabber()
-        self.train_prenorm_label = self.data_grabber.train_label
-        self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
+        #self.data_grabber = DataGrabber()
+        #self.train_prenorm_label = self.data_grabber.train_label
+        #self.train_prenorm_data, self.train_prenorm_label  = self.pre_normalization(self.data_grabber.train_data)
 
-    def pre_normalization(self, data, zaxis=[11, 5], xaxis=[6, 5]):
+    def pre_normalization(self, s, labels,zaxis=[11, 5], xaxis=[6, 5]):
     # Remark ER: Is zaxis = [11,5] a good idea? It may reflect real people w.r.t. to the xy-plane. This is only an issue
     # for visualisation.
         '''
@@ -82,11 +82,11 @@ class preNormaliser:
             	M: person ID
             }
         '''
-        data = data[:,:,:305,:,:]  # TO REDUCE DATA SIZE: MAXIMAL LENGTH 305
+        s = s[:,:,:305,:,:]  # TO REDUCE DATA SIZE: MAXIMAL LENGTH 305
         
-        N, C, T, V, M = data.shape
+        N, C, T, V, M = s.shape
 
-        s = np.transpose(data, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
+        s = np.transpose(s, [0, 4, 2, 3, 1])  # to (N, M, T, V, C)
 
         if self.switchBody:
             print("Switching bodies, if it reduces total energy.")
@@ -98,6 +98,7 @@ class preNormaliser:
                     sample = switchPeople(sample)
                     skeletons.append(sample)
             s = np.stack(skeletons)
+        skeletons = None
 
         if self.isScaling: #0 for not doing, 1 for frame-wise, 2 for sample-wise
             print('rescale each object sequence to the range [0,1] while conserving the high-width ratio')
@@ -111,7 +112,8 @@ class preNormaliser:
                     skeleton = self.parallelScale(skeleton,isSamplewise)
                     skeletons.append(skeleton)
             s[...,:ndim] = np.stack(skeletons)
-
+        skeletons = None
+        
         def eliminateSpikesSample(sample):
             for m in range(2):
                 if sample[m, :, :, :].sum() == 0:
@@ -146,6 +148,7 @@ class preNormaliser:
                     sample = padNullFramesSample(sample)
                     skeletons.append(sample)
             s = np.stack(skeletons)
+        skeletons = None
 
         """
         if self.isPadding:
@@ -208,7 +211,8 @@ class preNormaliser:
             if skeleton.sum() == 0:
                 no_skeleton.append(i_s)
 
-        print(no_skeleton,'have no skeleton.')
+        print('The entries of',no_skeleton,'have no skeleton.')
+        no_skeleton = None
 
         """
             #print('skip the null frames')
@@ -284,6 +288,7 @@ class preNormaliser:
                     sample = setActivePerson0(sample)
                     skeletons.append(sample)
             s = np.stack(skeletons)
+        skeletons = None
 
         if self.setPerson0 == 2:
             print("setting left person to position 0")
@@ -295,6 +300,7 @@ class preNormaliser:
                     sample = setLeftPerson0(sample)
                     skeletons.append(sample)
             s = np.stack(skeletons)
+        skeletons = None
 
         if self.isCentering:  # 0 for not centering, 1 for frame-wise centering, 2 for sample-wise centering
             print('sub the center joint of {} frame (spine joint in ntu and neck joint in kinetics)'.format(
@@ -315,6 +321,7 @@ class preNormaliser:
                     skeleton = self.parallelCenter(skeleton, index, isSamplewise)
                     skeletons.append(skeleton)
             s[..., :ndim] = np.stack(skeletons)
+        skeletons = None
 
         if self.is3DRotating:  # 0 for not doing, 1 for frame-wise, 2 for sample-wise
             if C > 3:  # only use for 3d
@@ -336,6 +343,7 @@ class preNormaliser:
                         skeleton = self.parallelRotation(skeleton, zaxis, xaxis, isSamplewise)
                         skeletons.append(skeleton)
                 s[..., :ndim] = np.stack(skeletons)
+        skeletons = None
 
         if self.isScaling:  # 0 for not doing, 1 for frame-wise, 2 for sample-wise
             print('rescale a second time')
@@ -350,12 +358,14 @@ class preNormaliser:
                     skeleton = self.parallelScale(skeleton, isSamplewise)
                     skeletons.append(skeleton)
             s[..., :ndim] = np.stack(skeletons)
+        skeletons = None
 
         if self.smoothen:
             print('apply Savgol filter')
             s[..., :2] = savgol_filter(s[..., :2], 9, 2, axis=2)
 
-        labels = self.train_prenorm_label.copy()
+        if labels is not None:
+            labels_tmp = labels.copy()
         if self.setPerson0 == 3:
             print("duplicate samples with 2 bodies")
             swappedSamples = []
@@ -363,9 +373,13 @@ class preNormaliser:
             for i, sample in enumerate(tqdm(s)):
                 if numberBodies(sample) == 2:
                     swappedSamples.append(np.flip(sample, axis=0))
-                    newLabels.append(self.train_prenorm_label[i])
-            labels = np.concatenate((self.train_prenorm_label, np.stack(newLabels)), axis = 0)
+                    if labels is not None:
+                        newLabels.append(labels[i])
+            if labels is not None:
+                labels_tmp = np.concatenate((labels_tmp, np.stack(newLabels)), axis = 0)
             s = np.concatenate((s, np.stack(swappedSamples)), axis=0)
+        if labels is not None:
+            labels = labels_tmp
 
         def parallelGetEnergy(sample):
             energy0 = energyNodes(sample[0,...])
@@ -407,10 +421,10 @@ class preNormaliser:
                 confidence = nonZeroEnergies * sigmoid_v(confidence)
                 s = np.concatenate((s,confidence), axis = 4)
 
-        data = np.transpose(s, [0, 4, 2, 3, 1])
+        s = np.transpose(s, [0, 4, 2, 3, 1])
 
         print("-----------------Finished Preprocessing-----------------")
-        return data, labels
+        return s, labels
 
     def parallelRotation(self, skeleton,zaxis,xaxis):
         if skeleton.sum() == 0:
