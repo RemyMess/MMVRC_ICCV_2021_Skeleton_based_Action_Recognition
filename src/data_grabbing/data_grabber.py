@@ -22,11 +22,13 @@ class DataGrabber:
         data_uav = np.load(os.path.join(self.dataset_folder_path,'{}_raw_data.npy'.format(flag)),mmap_mode='r') # mmap_mode = None (not 'r')
         #N,C,T,V,M = data_uav.shape
         #print(N,C,T,V,M)
-
-        with open(os.path.join(self.dataset_folder_path,'{}_label.pkl'.format(flag)), 'rb') as f:
-            sample_name, label_uav = pickle.load(f)
+        if flag == 'train':
+            with open(os.path.join(self.dataset_folder_path,'{}_label.pkl'.format(flag)), 'rb') as f:
+                sample_name, label_uav = pickle.load(f)
         
-        label_uav = np.array(label_uav)
+            label_uav = np.array(label_uav)
+        else:
+            label_uav = None
         #print(label_uav.shape)
         return data_uav,label_uav
 
