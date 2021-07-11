@@ -13,7 +13,12 @@ class preNormaliser:
         Further normalisations may be added, or existing one edited. This script is based on the corresponding script
         ... on github in "pipeline", downloaded on Friday, 18 June, at around 7:30 GMT+1. 
         
-        The DataGrabber object requires data (np.array) of shape (N,C,T,V,M), see data_grabber.py or below. pre_normalization returns data (np.array, float) of the same shape.
+        The DataGrabber generates the data from the raw data in .zip files. (See data_grabber.py)
+
+        The preprocessed data is stored in the self.train_prenorm_data as a (N,C,T,V,M) np.array. The corresponding train labels are stored in an np.array of length N
+        in self.train_prenorm_label.
+        If the file is run with the flag test, it loads the test data, and stores it as a (N,C,T,V,M) np.array in the attribute self.test_prenorm_data, and it saves
+        the corresponding file names as a string list in self.test_filenames.
         
         Remark / Question: should one perhaps take zaxis=[5,11] rather then [11,5] for visualisation?
 
@@ -26,11 +31,17 @@ class preNormaliser:
         3.5) padding            --If eliminateSpikes is True, this automatically happens in eliminate_spikes. Replaces zero-frames at the start with the next non-zero frame. Replaces zero
                                   frames in the middle with convex combinations of the next and last non-zero-frame. Replaces zero-frames at the end with the last non-zero frame.
                                   Replaced frames get marked with a 0 in C = 2 in each vertex, while original frames have a 1.
+        5) setPerson0           --If setPerson0 is not 0, the class tries to make sure that for each label with two bodies, the same body belongs to person number 0. If setPerson0 = 1,
+                                  the body with the higher average movement throughout the sample becomes person 0. If setPerson0 = 1, the person farther to the left becomes person 0.
+                                  If setPerson = 3, it does not try to predict who is who, but instead creates mirrored copies of samples with 2 bodies and attaches them at the end of
+                                  the data (does increase N!).
         4) centering            --centers the center of mass (average between both shoulders and both hips) at (0,0) for each frame. The sample-wise version centers the first frame.
         5) rotation             --3d rotates the sample. Since our data is 2d, this does nothing for now.
         6) scale again          --eliminating spikes might have changed the scale, so we aplly it again.
         7) smoothing            --applies a savgol filter too smoothen the data with parameters (Window = 9, degree = 2).
-        8) remove sample with less than 10% frames (of true length), or an unrealistic energy (optional)    THIS IS NOT YET IMPLEMENTED
+        8) confidence           --If confidence is not 0, it augments the data with a confidence score based on the energy in C=4. If confidence = 1, each vertex gets its average movement
+                                  speed from the previous frame to the next as confidence score. If confidence = 2, a logarithmic sigmoid function is applied to make the energies easier
+                                  comparable.
     '''
     def __init__(self, pad=True, centre=1, rotate=0, switchBody =True, eliminateSpikes = True, scale = 2, parallel = True, smoothen = True,
                  setPerson0 = 2, confidence = 0, flag = 'train'):

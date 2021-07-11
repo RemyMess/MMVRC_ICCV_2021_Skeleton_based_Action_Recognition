@@ -32,7 +32,9 @@ class DataGrabber:
         self.refactored_dataset_folder_path = os.path.join(os.path.dirname(__file__), "refactored_data")
 
         # A. Check that raw data has been added
-        self.check_raw_data_has_been_added()
+        if not self.data_has_already_been_refactored(given_flag):
+            self.check_raw_data_has_been_added()
+
         # B. Refactor data
         for flag in ['test', 'train']:
             # if no refactored file, factor.
